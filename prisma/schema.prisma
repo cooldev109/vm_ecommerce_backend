@@ -1,0 +1,469 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USERS & AUTHENTICATION
+// ============================================
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  role          Role     @default(USER)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  profile         Profile?
+  carts           Cart[]
+  orders          Order[]
+  subscriptions   Subscription[]
+  invoices        Invoice[]
+  audioAccessKeys AudioAccessKey[]
+  reviews         ProductReview[]
+  wishlistItems   WishlistItem[]
+
+  @@map("users")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model Profile {
+  id                String       @id @default(uuid())
+  userId            String       @unique @map("user_id")
+  firstName         String       @map("first_name")
+  lastName          String       @map("last_name")
+  phone             String?
+  customerType      CustomerType @map("customer_type")
+  taxId             String?      @map("tax_id") // RUT for individuals
+  businessName      String?      @map("business_name")
+  businessTaxId     String?      @map("business_tax_id") // RUT empresarial
+  preferredLanguage Language     @default(ES) @map("preferred_language")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addresses Address[]
+
+  @@map("profiles")
+}
+
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+model Address {
+  id         String      @id @default(uuid())
+  profileId  String      @map("profile_id")
+  type       AddressType
+  street     String
+  city       String
+  region     String
+  postalCode String      @map("postal_code")
+  country    String      @default("Chile")
+  isDefault  Boolean     @default(false) @map("is_default")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("addresses")
+}
+
+enum AddressType {
+  SHIPPING
+  BILLING
+}
+
+// ============================================
+// PRODUCTS & CATALOG
+// ============================================
+
+model Product {
+  id         String              @id // String IDs: '1', '2', 'acc-1'
+  category   ProductCategory
+  price      Decimal             @db.Decimal(10, 2)
+  image      String // Primary image URL
+  images     String[] // Gallery images
+  audioUrl   String?             @map("audio_url") // Audio experience URL
+  audioTitle String?             @map("audio_title") // Audio title/name
+  audioDuration Int?             @map("audio_duration") // Duration in seconds
+  inStock    Boolean             @default(true) @map("in_stock")
+  stockQuantity Int              @default(0) @map("stock_quantity") // Inventory count
+  // Inventory Management
+  stock               Int      @default(0) // Current stock quantity
+  lowStockThreshold   Int      @default(10) @map("low_stock_threshold") // Alert threshold
+  trackInventory      Boolean  @default(true) @map("track_inventory") // Enable/disable tracking
+  burnTime   String?             @map("burn_time") // e.g., "50-60 hours"
+  size       String? // e.g., "250g"
+  featured   Boolean             @default(false)
+  sortOrder  Int                 @default(0) @map("sort_order")
+  createdAt  DateTime            @default(now()) @map("created_at")
+  updatedAt  DateTime            @updatedAt @map("updated_at")
+
+  translations  ProductTranslation[]
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  reviews       ProductReview[]
+  wishlistItems WishlistItem[]
+
+  @@map("products")
+}
+
+enum ProductCategory {
+  CANDLES
+  ACCESSORIES
+  SETS
+}
+
+model ProductTranslation {
+  id              String   @id @default(uuid())
+  productId       String   @map("product_id")
+  language        Language
+  name            String
+  description     String   @db.Text
+  longDescription String?  @map("long_description") @db.Text
+  features        String[] // JSON array of feature strings
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, language])
+  @@map("product_translations")
+}
+
+enum Language {
+  ES
+  EN
+  FR
+  DE
+  PT
+  ZH
+  HI
+}
+
+// ============================================
+// PRODUCT REVIEWS
+// ============================================
+
+model ProductReview {
+  id        String   @id @default(uuid())
+  productId String   @map("product_id")
+  userId    String   @map("user_id")
+  rating    Int      // 1-5 stars
+  comment   String?  @db.Text
+  verified  Boolean  @default(false) // True if user purchased the product
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, userId]) // One review per user per product
+  @@map("product_reviews")
+}
+
+// ============================================
+// WISHLIST
+// ============================================
+
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  productId String   @map("product_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId]) // One wishlist entry per user per product
+  @@map("wishlist_items")
+}
+
+// ============================================
+// SHOPPING CART
+// ============================================
+
+model Cart {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id") // Null for guest carts
+  sessionId String?  @map("session_id") // For guest carts
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user  User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String   @map("cart_id")
+  productId String   @map("product_id")
+  quantity  Int      @default(1)
+  // Denormalized fields (stored at add time)
+  name      String
+  price     Decimal  @db.Decimal(10, 2)
+  image     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("cart_items")
+}
+
+// ============================================
+// ORDERS
+// ============================================
+
+model Order {
+  id       String @id // Format: 'ORD-001', 'ORD-002'
+  userId   String @map("user_id")
+  orderNumber Int    @unique @default(autoincrement()) @map("order_number") // For ID generation
+
+  // Customer snapshot (at order time)
+  customerType    CustomerType @map("customer_type")
+  firstName       String       @map("first_name")
+  lastName        String       @map("last_name")
+  email           String
+  phone           String
+  taxId           String?      @map("tax_id")
+  businessName    String?      @map("business_name")
+  businessTaxId   String?      @map("business_tax_id")
+
+  // Shipping address
+  shippingAddress    String @map("shipping_address")
+  shippingCity       String @map("shipping_city")
+  shippingPostalCode String @map("shipping_postal_code")
+  shippingCountry    String @map("shipping_country")
+
+  // Billing address
+  billingAddress    String @map("billing_address")
+  billingCity       String @map("billing_city")
+  billingPostalCode String @map("billing_postal_code")
+  billingCountry    String @map("billing_country")
+
+  // Totals
+  subtotal     Decimal @db.Decimal(10, 2)
+  shippingCost Decimal @db.Decimal(10, 2) @map("shipping_cost")
+  total        Decimal @db.Decimal(10, 2)
+
+  // Status
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(PENDING) @map("payment_status")
+
+  // Webpay integration
+  webpayToken         String?   @map("webpay_token")
+  webpayTransactionId String?   @map("webpay_transaction_id")
+
+  // Shipping tracking
+  trackingNumber String?   @map("tracking_number")
+  carrier        String?   // Shipping carrier
+  shippedAt      DateTime? @map("shipped_at")
+  deliveredAt    DateTime? @map("delivered_at")
+
+  // Admin notes
+  adminNotes String? @map("admin_notes") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user    User        @relation(fields: [userId], references: [id])
+  items   OrderItem[]
+  invoice Invoice?
+
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String   @map("order_id")
+  productId String   @map("product_id")
+  // Snapshot at purchase time
+  name      String
+  price     Decimal  @db.Decimal(10, 2)
+  quantity  Int
+  image     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+// ============================================
+// SUBSCRIPTIONS & AUDIO
+// ============================================
+
+model Subscription {
+  id          String             @id @default(uuid())
+  userId      String             @map("user_id")
+  planId      SubscriptionPlan   @map("plan_id")
+  status      SubscriptionStatus @default(ACTIVE)
+  startedAt   DateTime?          @map("started_at")
+  expiresAt   DateTime?          @map("expires_at")
+  nextRenewal DateTime?          @map("next_renewal")
+  autoRenew   Boolean            @default(true) @map("auto_renew")
+  // Payment
+  paymentMethod       String?   @map("payment_method")
+  paymentStatus       String?   @map("payment_status") // PENDING, PAID, FAILED
+  webpayToken         String?   @map("webpay_token")
+  webpayTransactionId String?   @map("webpay_transaction_id")
+  lastPaymentDate     DateTime? @map("last_payment_date")
+  amount              Int?      // Amount paid in CLP
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+enum SubscriptionPlan {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  PAUSED
+}
+
+model AudioContent {
+  id              String        @id @default(uuid())
+  titleKey        String        @map("title_key") // Translation key
+  category        AudioCategory
+  fileUrl         String        @map("file_url") // S3/CDN URL
+  durationSeconds Int           @map("duration_seconds")
+  isPreview       Boolean       @default(false) @map("is_preview")
+  requiredPlan    String?       @map("required_plan") // null = all plans
+  sortOrder       Int           @default(0) @map("sort_order")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@map("audio_contents")
+}
+
+enum AudioCategory {
+  AMBIENT
+  MEDITATION
+  FREQUENCY
+  EXCLUSIVE
+}
+
+model AudioAccessKey {
+  id               String    @id @default(uuid())
+  keyCode          String    @unique @map("key_code") // e.g., "VM-XXXXX-XXXXX"
+  planId           String    @map("plan_id")
+  durationMonths   Int       @map("duration_months")
+  isRedeemed       Boolean   @default(false) @map("is_redeemed")
+  redeemedByUserId String?   @map("redeemed_by_user_id")
+  redeemedAt       DateTime? @map("redeemed_at")
+  expiresAt        DateTime? @map("expires_at") // Key expiration after redemption
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  // Relation to user who redeemed
+  redeemedBy       User?     @relation(fields: [redeemedByUserId], references: [id])
+
+  @@map("audio_access_keys")
+}
+
+// ============================================
+// INVOICES
+// ============================================
+
+model Invoice {
+  id            String       @id // Format: 'INV-2024-0001'
+  orderId       String       @unique @map("order_id")
+  userId        String       @map("user_id")
+  invoiceNumber String       @unique @map("invoice_number") // Same as id
+  invoiceDate   DateTime     @map("invoice_date")
+  // Customer snapshot
+  customerType  CustomerType @map("customer_type")
+  customerName  String       @map("customer_name")
+  customerTaxId String       @map("customer_tax_id")
+  customerEmail String       @map("customer_email")
+  customerAddress String     @map("customer_address")
+  // Line items (stored as JSON)
+  items         Json // Array of {productName, quantity, unitPrice, total}
+  // Totals
+  subtotal      Decimal      @db.Decimal(10, 2)
+  taxAmount     Decimal      @db.Decimal(10, 2) @map("tax_amount") // IVA 19%
+  shippingCost  Decimal      @db.Decimal(10, 2) @map("shipping_cost")
+  total         Decimal      @db.Decimal(10, 2)
+  // Status
+  status        InvoiceStatus @default(DRAFT)
+  pdfUrl        String?       @map("pdf_url")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  CANCELLED
+}
+
+// ============================================
+// NEWSLETTER
+// ============================================
+
+model NewsletterSubscriber {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  status         NewsletterStatus @default(SUBSCRIBED)
+  subscribedAt   DateTime  @default(now()) @map("subscribed_at")
+  unsubscribedAt DateTime? @map("unsubscribed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("newsletter_subscribers")
+}
+
+enum NewsletterStatus {
+  SUBSCRIBED
+  UNSUBSCRIBED
+}
