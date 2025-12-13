@@ -13,6 +13,7 @@
     "db:seed": "dotenv -e .env -- node prisma/seed.js",
     "db:studio": "dotenv -e .env -- prisma studio",
     "db:reset": "dotenv -e .env -- prisma migrate reset",
+    "db:fix-migration": "node scripts/fix-migration.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
