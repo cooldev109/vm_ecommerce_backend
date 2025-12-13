@@ -1,4 +1,6 @@
--- AlterTable ALTER TABLE "products" ADD COLUMN "stock" INTEGER NOT NULL DEFAULT 0,
+-- AlterTable
+ALTER TABLE "products"
+ADD COLUMN "stock" INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN "low_stock_threshold" INTEGER NOT NULL DEFAULT 10,
 ADD COLUMN "track_inventory" BOOLEAN NOT NULL DEFAULT true;
 
