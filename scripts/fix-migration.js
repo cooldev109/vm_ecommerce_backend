@@ -22,9 +22,9 @@ async function fixFailedMigration() {
     // Check current migrations
     console.log('📋 Current migrations:');
     const checkResult = await client.query(
-      `SELECT migration_name, finished_at, success
+      `SELECT migration_name, finished_at, started_at, applied_steps_count
        FROM _prisma_migrations
-       ORDER BY finished_at DESC
+       ORDER BY started_at DESC
        LIMIT 5`
     );
     console.table(checkResult.rows);
@@ -48,9 +48,9 @@ async function fixFailedMigration() {
     // Verify deletion
     console.log('📋 Updated migrations list:');
     const verifyResult = await client.query(
-      `SELECT migration_name, finished_at, success
+      `SELECT migration_name, finished_at, started_at, applied_steps_count
        FROM _prisma_migrations
-       ORDER BY finished_at DESC
+       ORDER BY started_at DESC
        LIMIT 5`
     );
     console.table(verifyResult.rows);
