@@ -37,18 +37,26 @@ app.use(helmet({
 // CORS configuration
 app.use(cors({
   origin: (origin, callback) => {
+    // Allow requests with no origin (direct browser access, Postman, curl, etc.)
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
     // In development, allow any localhost port
     if (process.env.NODE_ENV !== 'production') {
-      if (!origin || /^http:\/\/localhost:\d+$/.test(origin)) {
+      if (/^http:\/\/localhost:\d+$/.test(origin)) {
         callback(null, true);
         return;
       }
     }
+
     // In production, only allow configured origin
     const allowedOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
     if (origin === allowedOrigin) {
       callback(null, true);
     } else {
+      logger.warn(`CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
