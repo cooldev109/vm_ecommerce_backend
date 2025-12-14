@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import logger from './config/logger.js';
+import { autoSeedIfNeeded } from './utils/autoSeed.js';
 import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
 import profileRouter from './routes/profile.js';
@@ -158,12 +159,24 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  logger.info(`🚀 Server running on port ${PORT}`);
-  logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`🌐 Frontend URL: ${process.env.FRONTEND_URL}`);
-  logger.info(`✅ Health check: http://localhost:${PORT}/api/health`);
+// Auto-seed database if empty (production deployment helper)
+async function startServer() {
+  // Check and seed database if needed
+  await autoSeedIfNeeded();
+
+  // Start server
+  app.listen(PORT, () => {
+    logger.info(`🚀 Server running on port ${PORT}`);
+    logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`🌐 Frontend URL: ${process.env.FRONTEND_URL}`);
+    logger.info(`✅ Health check: http://localhost:${PORT}/api/health`);
+  });
+}
+
+// Initialize server
+startServer().catch((error) => {
+  logger.error('Failed to start server:', error);
+  process.exit(1);
 });
 
 // Graceful shutdown
