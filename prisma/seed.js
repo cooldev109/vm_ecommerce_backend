@@ -142,6 +142,7 @@ async function main() {
     { id: 'acc-1', category: 'ACCESSORIES', price: 25.00, image: '/src/assets/accessory-snuffer.jpg', burnTime: null, size: null },
     { id: 'acc-2', category: 'ACCESSORIES', price: 28.00, image: '/src/assets/accessory-trimmer.jpg', burnTime: null, size: null },
     { id: 'acc-3', category: 'ACCESSORIES', price: 22.00, image: '/src/assets/accessory-dipper.jpg', burnTime: null, size: null },
+    { id: 'acc-4', category: 'ACCESSORIES', price: 69.00, image: '/src/assets/accessory-set.jpg', burnTime: null, size: null },
   ];
 
   for (const product of products) {
@@ -252,6 +253,10 @@ async function main() {
     'acc-3': {
       ES: { name: 'Apagador Sumergible', desc: 'Apagador de mecha que sumerge la llama en la cera para evitar humo y conservar el aroma', features: ['Acero resistente', 'Sin humo', 'Conserva el aroma', 'Fácil de usar'] },
       EN: { name: 'Wick Dipper', desc: 'Wick dipper that submerges the flame in wax to avoid smoke and preserve aroma', features: ['Resistant steel', 'Smoke-free', 'Preserves aroma', 'Easy to use'] }
+    },
+    'acc-4': {
+      ES: { name: 'Set Completo de Accesorios Premium', desc: 'Set completo de accesorios para el cuidado profesional de tus velas, incluye apagavelas, cortamechas, apagador sumergible y bandeja dorada', features: ['3 herramientas profesionales', 'Bandeja organizadora dorada', 'Acabado premium', 'Cuidado completo de velas'] },
+      EN: { name: 'Complete Premium Accessories Set', desc: 'Complete accessory set for professional candle care, includes snuffer, wick trimmer, wick dipper and gold tray', features: ['3 professional tools', 'Gold organizer tray', 'Premium finish', 'Complete candle care'] }
     },
   };
 
