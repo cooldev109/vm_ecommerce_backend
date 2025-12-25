@@ -3,7 +3,7 @@
  * Run: DATABASE_URL="your-prod-url" node scripts/seed-production.js
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/generated/prisma/index.js';
 
 const prisma = new PrismaClient();
 
