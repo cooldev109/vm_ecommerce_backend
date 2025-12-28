@@ -135,7 +135,7 @@ async function main() {
     { id: 'acc-1', category: 'ACCESSORIES', price: 25.00, image: '/src/assets/accessory-snuffer.jpg', burnTime: null, size: null },
     { id: 'acc-2', category: 'ACCESSORIES', price: 28.00, image: '/src/assets/accessory-trimmer.jpg', burnTime: null, size: null },
     { id: 'acc-3', category: 'ACCESSORIES', price: 22.00, image: '/src/assets/accessory-dipper.jpg', burnTime: null, size: null },
-    { id: 'acc-4', category: 'ACCESSORIES', price: 69.00, image: '/src/assets/accessory-set.jpg', burnTime: null, size: null },
+    { id: 'acc-4', category: 'SETS', price: 69.00, image: '/src/assets/accessory-set.jpg', burnTime: null, size: null },
   ];
 
   for (const product of products) {
