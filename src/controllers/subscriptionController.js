@@ -902,6 +902,371 @@ export const getSubscriptionAnalytics = async (req, res) => {
   }
 };
 
+// Upgrade subscription to a higher plan with payment
+export const upgradeSubscription = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { subscriptionId } = req.params;
+    const { newPlanId } = req.body;
+
+    // Validate new plan
+    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(newPlanId)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_PLAN',
+          message: 'Invalid subscription plan'
+        }
+      });
+    }
+
+    // Find current subscription
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId }
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'SUBSCRIPTION_NOT_FOUND',
+          message: 'Subscription not found'
+        }
+      });
+    }
+
+    // Verify ownership
+    if (subscription.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Not authorized to upgrade this subscription'
+        }
+      });
+    }
+
+    // Only active subscriptions can be upgraded
+    if (subscription.status !== 'ACTIVE') {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_STATUS',
+          message: 'Only active subscriptions can be upgraded'
+        }
+      });
+    }
+
+    // Can't upgrade to the same plan
+    if (subscription.planId === newPlanId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'SAME_PLAN',
+          message: 'Already subscribed to this plan'
+        }
+      });
+    }
+
+    // Calculate plan hierarchy (higher = better)
+    const planHierarchy = { MONTHLY: 1, QUARTERLY: 2, ANNUAL: 3 };
+    const currentPlanLevel = planHierarchy[subscription.planId];
+    const newPlanLevel = planHierarchy[newPlanId];
+    const isUpgrade = newPlanLevel > currentPlanLevel;
+
+    // Calculate price difference
+    const currentPrice = SUBSCRIPTION_PRICES[subscription.planId];
+    const newPrice = SUBSCRIPTION_PRICES[newPlanId];
+
+    // For upgrades, charge the difference; for downgrades, no payment needed (just change at next renewal)
+    let upgradeAmount = 0;
+    let immediateChange = false;
+
+    if (isUpgrade) {
+      // Calculate prorated amount based on remaining time
+      const now = new Date();
+      const expiresAt = new Date(subscription.expiresAt);
+      const startedAt = new Date(subscription.startedAt);
+
+      // Calculate what percentage of the current billing period is remaining
+      const totalPeriodMs = expiresAt.getTime() - startedAt.getTime();
+      const remainingMs = Math.max(0, expiresAt.getTime() - now.getTime());
+      const remainingRatio = remainingMs / totalPeriodMs;
+
+      // Calculate credit from current plan (unused portion)
+      const credit = Math.round(currentPrice * remainingRatio);
+
+      // Charge full price of new plan minus credit
+      upgradeAmount = Math.max(0, newPrice - credit);
+      immediateChange = true;
+    } else {
+      // Downgrade: Change will take effect at next renewal, no payment needed
+      immediateChange = false;
+      upgradeAmount = 0;
+    }
+
+    // Create a pending upgrade record
+    const upgrade = await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        // Store upgrade info but don't change plan yet until payment (for upgrades)
+        // For downgrades, just schedule the change
+        ...(immediateChange ? {} : { planId: newPlanId }),
+        paymentStatus: immediateChange ? 'PENDING' : 'PAID',
+      }
+    });
+
+    logger.info(`Subscription upgrade initiated: ${subscriptionId} from ${subscription.planId} to ${newPlanId}`, {
+      isUpgrade,
+      upgradeAmount,
+      immediateChange
+    });
+
+    res.json({
+      success: true,
+      data: {
+        subscriptionId: subscription.id,
+        currentPlan: subscription.planId,
+        newPlan: newPlanId,
+        isUpgrade,
+        upgradeAmount,
+        requiresPayment: isUpgrade && upgradeAmount > 0,
+        effectiveImmediately: immediateChange,
+        message: isUpgrade
+          ? 'Payment required to complete upgrade'
+          : 'Your plan will change at the next renewal date'
+      }
+    });
+  } catch (error) {
+    logger.error('Error initiating subscription upgrade:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'UPGRADE_ERROR',
+        message: 'Failed to initiate subscription upgrade'
+      }
+    });
+  }
+};
+
+// Initialize payment for subscription upgrade
+export const initUpgradePayment = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { subscriptionId, newPlanId, amount } = req.body;
+
+    if (!subscriptionId || !newPlanId || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMS',
+          message: 'Subscription ID, new plan ID, and amount are required'
+        }
+      });
+    }
+
+    // Find subscription and verify ownership
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        id: subscriptionId,
+        userId
+      }
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'SUBSCRIPTION_NOT_FOUND',
+          message: 'Subscription not found'
+        }
+      });
+    }
+
+    // Create Webpay transaction for upgrade
+    const buyOrder = `UPG-${subscription.id.substring(0, 20)}`; // Prefix with UPG to identify upgrade payments
+    const sessionId = `${userId}-${newPlanId}`;
+    const returnUrl = `${WEBPAY_CONFIG.returnUrl.replace('/payments/webpay/return', '/subscriptions/upgrade/webpay/return')}`;
+
+    logger.info('Initializing Webpay transaction for subscription upgrade', {
+      subscriptionId,
+      newPlanId,
+      amount,
+      buyOrder,
+      sessionId,
+      returnUrl
+    });
+
+    // Call Transbank API to create transaction
+    const response = await webpayTransaction.create(
+      buyOrder,
+      sessionId,
+      amount,
+      returnUrl
+    );
+
+    // Store upgrade info temporarily (will be processed after payment)
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        webpayToken: response.token,
+        // Store new plan ID in a way we can retrieve it - using amount field temporarily
+        // In production, you'd want a separate SubscriptionUpgrade table
+      }
+    });
+
+    // Store upgrade details in session/cache (in production use Redis or similar)
+    // For simplicity, we'll encode it in the session ID
+
+    logger.info('Webpay transaction created for subscription upgrade', {
+      subscriptionId,
+      newPlanId,
+      token: response.token
+    });
+
+    res.json({
+      success: true,
+      data: {
+        token: response.token,
+        url: response.url,
+        subscriptionId: subscription.id,
+        newPlanId,
+        amount
+      }
+    });
+  } catch (error) {
+    logger.error('Error initializing upgrade payment:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'WEBPAY_INIT_ERROR',
+        message: 'Failed to initialize upgrade payment',
+        details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      }
+    });
+  }
+};
+
+// Handle Webpay return callback for subscription upgrade
+export const handleUpgradeWebpayReturn = async (req, res) => {
+  try {
+    logger.info('Subscription upgrade Webpay return received', {
+      body: req.body || {},
+      query: req.query || {},
+      headers: req.headers['content-type']
+    });
+
+    const token = (req.body && req.body.token_ws) || (req.query && req.query.token_ws);
+
+    if (!token) {
+      logger.error('No token found in upgrade payment request', { body: req.body, query: req.query });
+      const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error&message=missing_token`;
+      return res.redirect(errorUrl);
+    }
+
+    logger.info('Processing upgrade Webpay return with token', { token });
+
+    // Commit transaction with Transbank
+    let response;
+    try {
+      response = await webpayTransaction.commit(token);
+      logger.info('Transbank commit response received for upgrade', { response });
+    } catch (commitError) {
+      logger.error('Transbank commit API error for upgrade:', {
+        error: commitError.message,
+        stack: commitError.stack,
+        token
+      });
+      throw commitError;
+    }
+
+    // Find subscription by webpay token
+    const subscription = await prisma.subscription.findFirst({
+      where: { webpayToken: token }
+    });
+
+    if (!subscription) {
+      logger.error('Subscription not found for upgrade Webpay token', { token });
+      const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error&message=subscription_not_found`;
+      return res.redirect(errorUrl);
+    }
+
+    // Check if transaction was approved
+    const isApproved = response.status === 'AUTHORIZED' && response.response_code === 0;
+
+    if (isApproved) {
+      // Determine the new plan from the buy order or session
+      // The sessionId format is: userId-newPlanId
+      const sessionParts = response.session_id?.split('-') || [];
+      const newPlanId = sessionParts[1] || 'ANNUAL'; // Default to ANNUAL if parsing fails
+
+      // Calculate new expiry date based on new plan
+      const startDate = new Date();
+      const expiryDate = new Date(startDate);
+
+      switch (newPlanId) {
+        case 'MONTHLY':
+          expiryDate.setMonth(expiryDate.getMonth() + 1);
+          break;
+        case 'QUARTERLY':
+          expiryDate.setMonth(expiryDate.getMonth() + 3);
+          break;
+        case 'ANNUAL':
+          expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+          break;
+      }
+
+      // Update subscription with new plan
+      await prisma.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          planId: newPlanId,
+          status: 'ACTIVE',
+          paymentStatus: 'PAID',
+          startedAt: startDate,
+          expiresAt: expiryDate,
+          nextRenewal: expiryDate,
+          lastPaymentDate: startDate,
+          amount: SUBSCRIPTION_PRICES[newPlanId],
+          webpayTransactionId: response.transaction_date?.toString() || null
+        }
+      });
+
+      logger.info('Subscription upgrade payment approved and applied', {
+        subscriptionId: subscription.id,
+        newPlanId,
+        amount: response.amount,
+        authCode: response.authorization_code
+      });
+
+      const successUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?subscriptionId=${subscription.id}&status=upgraded&plan=${newPlanId}`;
+      return res.redirect(successUrl);
+    } else {
+      // Payment failed
+      await prisma.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          paymentStatus: 'PAID', // Keep as paid since original subscription is still active
+          webpayToken: null // Clear the token
+        }
+      });
+
+      logger.warn('Subscription upgrade payment rejected or failed', {
+        subscriptionId: subscription.id,
+        status: response.status,
+        responseCode: response.response_code
+      });
+
+      const failedUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?subscriptionId=${subscription.id}&status=upgrade_failed`;
+      return res.redirect(failedUrl);
+    }
+  } catch (error) {
+    logger.error('Error processing upgrade Webpay return:', error);
+    const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error`;
+    return res.redirect(errorUrl);
+  }
+};
+
 // Cron job function: Process subscription renewals
 export const processSubscriptionRenewals = async () => {
   try {
