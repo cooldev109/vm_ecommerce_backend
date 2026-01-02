@@ -1086,7 +1086,9 @@ export const initUpgradePayment = async (req, res) => {
     // Create Webpay transaction for upgrade
     const buyOrder = `UPG-${subscription.id.substring(0, 20)}`; // Prefix with UPG to identify upgrade payments
     const sessionId = `${userId}-${newPlanId}`;
-    const returnUrl = `${WEBPAY_CONFIG.returnUrl.replace('/payments/webpay/return', '/subscriptions/upgrade/webpay/return')}`;
+    // Use backend base URL to construct return URL for upgrades
+    const backendBaseUrl = process.env.BACKEND_URL || 'http://localhost:3000';
+    const returnUrl = `${backendBaseUrl}/api/subscriptions/upgrade/webpay/return`;
 
     logger.info('Initializing Webpay transaction for subscription upgrade', {
       subscriptionId,
