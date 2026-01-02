@@ -1085,7 +1085,8 @@ export const initUpgradePayment = async (req, res) => {
 
     // Create Webpay transaction for upgrade
     const buyOrder = `UPG-${subscription.id.substring(0, 20)}`; // Prefix with UPG to identify upgrade payments
-    const sessionId = `${userId}-${newPlanId}`;
+    // Use pipe separator to avoid conflict with UUID dashes
+    const sessionId = `${subscriptionId}|${newPlanId}`;
     // Use backend base URL to construct return URL for upgrades
     const backendBaseUrl = process.env.BACKEND_URL || 'http://localhost:3000';
     const returnUrl = `${backendBaseUrl}/api/subscriptions/upgrade/webpay/return`;
@@ -1198,8 +1199,8 @@ export const handleUpgradeWebpayReturn = async (req, res) => {
 
     if (isApproved) {
       // Determine the new plan from the buy order or session
-      // The sessionId format is: userId-newPlanId
-      const sessionParts = response.session_id?.split('-') || [];
+      // The sessionId format is: subscriptionId|newPlanId
+      const sessionParts = response.session_id?.split('|') || [];
       const newPlanId = sessionParts[1] || 'ANNUAL'; // Default to ANNUAL if parsing fails
 
       // Calculate new expiry date based on new plan
