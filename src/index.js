@@ -31,9 +31,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Trust proxy when behind Nginx (required for rate-limiting and getting real IP)
-if (process.env.NODE_ENV === 'production') {
-  app.set('trust proxy', 1);
-}
+// Always enable since we're behind nginx on VPS
+app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet({
