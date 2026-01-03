@@ -4,25 +4,308 @@ import logger from '../config/logger.js';
 const prisma = new PrismaClient();
 import { webpayTransaction, WEBPAY_CONFIG } from '../config/webpay.js';
 
-// Subscription pricing (in Chilean Pesos)
-export const SUBSCRIPTION_PRICES = {
+// Default subscription pricing (in Chilean Pesos) - used as fallback if DB is empty
+const DEFAULT_SUBSCRIPTION_PRICES = {
   MONTHLY: 9990,   // ~$13 USD
   QUARTERLY: 25990, // ~$34 USD (13% discount)
   ANNUAL: 89990     // ~$117 USD (25% discount)
 };
 
-// Get all subscription plans with pricing
+// Cache for subscription prices (loaded from DB)
+let subscriptionPricesCache = null;
+let cacheTimestamp = 0;
+const CACHE_TTL = 60000; // 1 minute cache
+
+// Get subscription prices from database or cache
+export const getSubscriptionPrices = async () => {
+  const now = Date.now();
+  if (subscriptionPricesCache && (now - cacheTimestamp) < CACHE_TTL) {
+    return subscriptionPricesCache;
+  }
+
+  try {
+    const configs = await prisma.subscriptionPlanConfig.findMany({
+      where: { isActive: true }
+    });
+
+    if (configs.length > 0) {
+      const prices = {};
+      configs.forEach(config => {
+        prices[config.id] = config.price;
+      });
+      subscriptionPricesCache = prices;
+      cacheTimestamp = now;
+      return prices;
+    }
+  } catch (error) {
+    logger.warn('Failed to load subscription prices from DB, using defaults:', error.message);
+  }
+
+  return DEFAULT_SUBSCRIPTION_PRICES;
+};
+
+// Export for backwards compatibility
+export const SUBSCRIPTION_PRICES = DEFAULT_SUBSCRIPTION_PRICES;
+
+// Get all subscription plans with pricing (from database)
 export const getSubscriptionPlans = async (req, res) => {
   try {
-    const plans = [
+    // Try to get plans from database
+    let configs = await prisma.subscriptionPlanConfig.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' }
+    });
+
+    // If no configs in DB, return default plans
+    if (configs.length === 0) {
+      const plans = getDefaultPlans();
+      return res.json({
+        success: true,
+        data: { plans }
+      });
+    }
+
+    // Get monthly price for savings calculation
+    const monthlyConfig = configs.find(c => c.id === 'MONTHLY');
+    const monthlyPrice = monthlyConfig?.price || DEFAULT_SUBSCRIPTION_PRICES.MONTHLY;
+
+    // Format plans from database configs
+    const plans = configs.map(config => {
+      let savings = 0;
+      if (config.id === 'QUARTERLY') {
+        savings = Math.round(monthlyPrice * 3 - config.price);
+      } else if (config.id === 'ANNUAL') {
+        savings = Math.round(monthlyPrice * 12 - config.price);
+      }
+
+      return {
+        id: config.id,
+        name: config.nameEn,
+        nameEs: config.nameEs,
+        price: config.price,
+        billingPeriod: config.billingPeriodEn,
+        billingPeriodEs: config.billingPeriodEs,
+        features: config.featuresEn,
+        featuresEs: config.featuresEs,
+        savings: savings > 0 ? savings : undefined,
+        popular: config.isPopular,
+        bestValue: config.isBestValue
+      };
+    });
+
+    res.json({
+      success: true,
+      data: { plans }
+    });
+  } catch (error) {
+    logger.error('Error fetching subscription plans:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'PLANS_FETCH_ERROR',
+        message: 'Failed to fetch subscription plans'
+      }
+    });
+  }
+};
+
+// Default plans for backwards compatibility
+function getDefaultPlans() {
+  return [
+    {
+      id: 'MONTHLY',
+      name: 'Monthly Premium',
+      nameEs: 'Premium Mensual',
+      price: DEFAULT_SUBSCRIPTION_PRICES.MONTHLY,
+      billingPeriod: 'month',
+      billingPeriodEs: 'mes',
+      features: [
+        'Unlimited access to all audio experiences',
+        'Early access to new candle releases',
+        'Exclusive meditation and relaxation content',
+        '10% discount on all purchases',
+        'Priority customer support'
+      ],
+      featuresEs: [
+        'Acceso ilimitado a todas las experiencias de audio',
+        'Acceso anticipado a nuevos lanzamientos de velas',
+        'Contenido exclusivo de meditación y relajación',
+        '10% de descuento en todas las compras',
+        'Soporte al cliente prioritario'
+      ]
+    },
+    {
+      id: 'QUARTERLY',
+      name: 'Quarterly Premium',
+      nameEs: 'Premium Trimestral',
+      price: DEFAULT_SUBSCRIPTION_PRICES.QUARTERLY,
+      billingPeriod: '3 months',
+      billingPeriodEs: '3 meses',
+      savings: Math.round((DEFAULT_SUBSCRIPTION_PRICES.MONTHLY * 3 - DEFAULT_SUBSCRIPTION_PRICES.QUARTERLY)),
+      features: [
+        'All Monthly Premium features',
+        'Save 13% compared to monthly',
+        'Exclusive quarterly curated playlists',
+        'Free shipping on all orders',
+        'Birthday gift - special candle'
+      ],
+      featuresEs: [
+        'Todas las características del Premium Mensual',
+        'Ahorra 13% comparado con mensual',
+        'Listas de reproducción exclusivas trimestrales',
+        'Envío gratis en todos los pedidos',
+        'Regalo de cumpleaños - vela especial'
+      ],
+      popular: true
+    },
+    {
+      id: 'ANNUAL',
+      name: 'Annual Premium',
+      nameEs: 'Premium Anual',
+      price: DEFAULT_SUBSCRIPTION_PRICES.ANNUAL,
+      billingPeriod: 'year',
+      billingPeriodEs: 'año',
+      savings: Math.round((DEFAULT_SUBSCRIPTION_PRICES.MONTHLY * 12 - DEFAULT_SUBSCRIPTION_PRICES.ANNUAL)),
+      features: [
+        'All Quarterly Premium features',
+        'Save 25% compared to monthly',
+        'Exclusive annual member events',
+        'Free candle every quarter',
+        'Lifetime 15% discount on all products',
+        'Personalized scent consultation'
+      ],
+      featuresEs: [
+        'Todas las características del Premium Trimestral',
+        'Ahorra 25% comparado con mensual',
+        'Eventos exclusivos para miembros anuales',
+        'Vela gratis cada trimestre',
+        'Descuento permanente del 15% en todos los productos',
+        'Consulta de fragancias personalizada'
+      ],
+      bestValue: true
+    }
+  ];
+}
+
+// ============ ADMIN FUNCTIONS ============
+
+// Get all plan configs (Admin)
+export const getAdminPlanConfigs = async (req, res) => {
+  try {
+    const configs = await prisma.subscriptionPlanConfig.findMany({
+      orderBy: { sortOrder: 'asc' }
+    });
+
+    res.json({
+      success: true,
+      data: { plans: configs }
+    });
+  } catch (error) {
+    logger.error('Error fetching plan configs:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'PLANS_FETCH_ERROR',
+        message: 'Failed to fetch plan configurations'
+      }
+    });
+  }
+};
+
+// Update plan config (Admin)
+export const updatePlanConfig = async (req, res) => {
+  try {
+    const { planId } = req.params;
+    const {
+      price,
+      nameEn,
+      nameEs,
+      billingPeriodEn,
+      billingPeriodEs,
+      featuresEn,
+      featuresEs,
+      isPopular,
+      isBestValue,
+      isActive,
+      sortOrder
+    } = req.body;
+
+    // Validate planId
+    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(planId)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_PLAN_ID',
+          message: 'Invalid plan ID'
+        }
+      });
+    }
+
+    // Upsert the plan config
+    const config = await prisma.subscriptionPlanConfig.upsert({
+      where: { id: planId },
+      update: {
+        price: price !== undefined ? price : undefined,
+        nameEn: nameEn !== undefined ? nameEn : undefined,
+        nameEs: nameEs !== undefined ? nameEs : undefined,
+        billingPeriodEn: billingPeriodEn !== undefined ? billingPeriodEn : undefined,
+        billingPeriodEs: billingPeriodEs !== undefined ? billingPeriodEs : undefined,
+        featuresEn: featuresEn !== undefined ? featuresEn : undefined,
+        featuresEs: featuresEs !== undefined ? featuresEs : undefined,
+        isPopular: isPopular !== undefined ? isPopular : undefined,
+        isBestValue: isBestValue !== undefined ? isBestValue : undefined,
+        isActive: isActive !== undefined ? isActive : undefined,
+        sortOrder: sortOrder !== undefined ? sortOrder : undefined
+      },
+      create: {
+        id: planId,
+        price: price || DEFAULT_SUBSCRIPTION_PRICES[planId],
+        nameEn: nameEn || `${planId.charAt(0) + planId.slice(1).toLowerCase()} Premium`,
+        nameEs: nameEs || `Premium ${planId.charAt(0) + planId.slice(1).toLowerCase()}`,
+        billingPeriodEn: billingPeriodEn || 'month',
+        billingPeriodEs: billingPeriodEs || 'mes',
+        featuresEn: featuresEn || [],
+        featuresEs: featuresEs || [],
+        isPopular: isPopular || false,
+        isBestValue: isBestValue || false,
+        isActive: isActive !== undefined ? isActive : true,
+        sortOrder: sortOrder || 0
+      }
+    });
+
+    // Invalidate cache
+    subscriptionPricesCache = null;
+
+    logger.info('Plan config updated', { planId, userId: req.user.id });
+
+    res.json({
+      success: true,
+      data: { plan: config }
+    });
+  } catch (error) {
+    logger.error('Error updating plan config:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'PLAN_UPDATE_ERROR',
+        message: 'Failed to update plan configuration'
+      }
+    });
+  }
+};
+
+// Initialize default plan configs (Admin)
+export const initializePlanConfigs = async (req, res) => {
+  try {
+    const defaultConfigs = [
       {
         id: 'MONTHLY',
-        name: 'Monthly Premium',
+        price: 9990,
+        nameEn: 'Monthly Premium',
         nameEs: 'Premium Mensual',
-        price: SUBSCRIPTION_PRICES.MONTHLY,
-        billingPeriod: 'month',
+        billingPeriodEn: 'month',
         billingPeriodEs: 'mes',
-        features: [
+        featuresEn: [
           'Unlimited access to all audio experiences',
           'Early access to new candle releases',
           'Exclusive meditation and relaxation content',
@@ -35,17 +318,20 @@ export const getSubscriptionPlans = async (req, res) => {
           'Contenido exclusivo de meditación y relajación',
           '10% de descuento en todas las compras',
           'Soporte al cliente prioritario'
-        ]
+        ],
+        isPopular: false,
+        isBestValue: false,
+        isActive: true,
+        sortOrder: 1
       },
       {
         id: 'QUARTERLY',
-        name: 'Quarterly Premium',
+        price: 25990,
+        nameEn: 'Quarterly Premium',
         nameEs: 'Premium Trimestral',
-        price: SUBSCRIPTION_PRICES.QUARTERLY,
-        billingPeriod: '3 months',
+        billingPeriodEn: '3 months',
         billingPeriodEs: '3 meses',
-        savings: Math.round((SUBSCRIPTION_PRICES.MONTHLY * 3 - SUBSCRIPTION_PRICES.QUARTERLY)),
-        features: [
+        featuresEn: [
           'All Monthly Premium features',
           'Save 13% compared to monthly',
           'Exclusive quarterly curated playlists',
@@ -59,17 +345,19 @@ export const getSubscriptionPlans = async (req, res) => {
           'Envío gratis en todos los pedidos',
           'Regalo de cumpleaños - vela especial'
         ],
-        popular: true
+        isPopular: true,
+        isBestValue: false,
+        isActive: true,
+        sortOrder: 2
       },
       {
         id: 'ANNUAL',
-        name: 'Annual Premium',
+        price: 89990,
+        nameEn: 'Annual Premium',
         nameEs: 'Premium Anual',
-        price: SUBSCRIPTION_PRICES.ANNUAL,
-        billingPeriod: 'year',
+        billingPeriodEn: 'year',
         billingPeriodEs: 'año',
-        savings: Math.round((SUBSCRIPTION_PRICES.MONTHLY * 12 - SUBSCRIPTION_PRICES.ANNUAL)),
-        features: [
+        featuresEn: [
           'All Quarterly Premium features',
           'Save 25% compared to monthly',
           'Exclusive annual member events',
@@ -85,21 +373,38 @@ export const getSubscriptionPlans = async (req, res) => {
           'Descuento permanente del 15% en todos los productos',
           'Consulta de fragancias personalizada'
         ],
-        bestValue: true
+        isPopular: false,
+        isBestValue: true,
+        isActive: true,
+        sortOrder: 3
       }
     ];
 
+    // Upsert all default configs
+    for (const config of defaultConfigs) {
+      await prisma.subscriptionPlanConfig.upsert({
+        where: { id: config.id },
+        update: config,
+        create: config
+      });
+    }
+
+    // Invalidate cache
+    subscriptionPricesCache = null;
+
+    logger.info('Plan configs initialized', { userId: req.user.id });
+
     res.json({
       success: true,
-      data: { plans }
+      data: { message: 'Plan configurations initialized successfully' }
     });
   } catch (error) {
-    logger.error('Error fetching subscription plans:', error);
+    logger.error('Error initializing plan configs:', error);
     res.status(500).json({
       success: false,
       error: {
-        code: 'PLANS_FETCH_ERROR',
-        message: 'Failed to fetch subscription plans'
+        code: 'PLANS_INIT_ERROR',
+        message: 'Failed to initialize plan configurations'
       }
     });
   }

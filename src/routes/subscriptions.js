@@ -14,7 +14,10 @@ import {
   getSubscriptionPaymentStatus,
   upgradeSubscription,
   initUpgradePayment,
-  handleUpgradeWebpayReturn
+  handleUpgradeWebpayReturn,
+  getAdminPlanConfigs,
+  updatePlanConfig,
+  initializePlanConfigs
 } from '../controllers/subscriptionController.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 
@@ -46,5 +49,10 @@ router.post('/upgrade/payment/init', authenticate, initUpgradePayment);
 // Admin routes
 router.get('/admin/all', authenticate, requireAdmin, getAllSubscriptions);
 router.get('/admin/analytics', authenticate, requireAdmin, getSubscriptionAnalytics);
+
+// Admin plan management routes
+router.get('/admin/plans', authenticate, requireAdmin, getAdminPlanConfigs);
+router.put('/admin/plans/:planId', authenticate, requireAdmin, updatePlanConfig);
+router.post('/admin/plans/initialize', authenticate, requireAdmin, initializePlanConfigs);
 
 export default router;

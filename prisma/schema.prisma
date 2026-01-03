@@ -359,6 +359,25 @@ enum SubscriptionPlan {
   ANNUAL
 }
 
+model SubscriptionPlanConfig {
+  id              String           @id // MONTHLY, QUARTERLY, ANNUAL
+  price           Int              // Price in CLP
+  nameEn          String           @map("name_en")
+  nameEs          String           @map("name_es")
+  billingPeriodEn String           @map("billing_period_en")
+  billingPeriodEs String           @map("billing_period_es")
+  featuresEn      String[]         @map("features_en")
+  featuresEs      String[]         @map("features_es")
+  isPopular       Boolean          @default(false) @map("is_popular")
+  isBestValue     Boolean          @default(false) @map("is_best_value")
+  isActive        Boolean          @default(true) @map("is_active")
+  sortOrder       Int              @default(0) @map("sort_order")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("subscription_plan_configs")
+}
+
 enum SubscriptionStatus {
   ACTIVE
   CANCELLED
