@@ -92,10 +92,11 @@ export async function getAnalytics(req, res) {
     // PRODUCT ANALYTICS
     // ============================================
 
-    // Top selling products (by quantity sold)
+    // Top selling products (by quantity sold, exclude deleted products)
     const topProductsByQuantity = await prisma.orderItem.groupBy({
       by: ['productId'],
       where: {
+        productId: { not: null },
         order: {
           paymentStatus: 'PAID'
         }
@@ -111,47 +112,50 @@ export async function getAnalytics(req, res) {
       take: 10
     });
 
-    // Fetch product details with revenue
+    // Fetch product details with revenue (filter out null productIds)
     const topProducts = await Promise.all(
-      topProductsByQuantity.map(async (item) => {
-        const product = await prisma.product.findUnique({
-          where: { id: item.productId },
-          include: {
-            translations: {
-              where: { language: 'EN' },
-              take: 1
+      topProductsByQuantity
+        .filter(item => item.productId !== null)
+        .map(async (item) => {
+          const product = await prisma.product.findUnique({
+            where: { id: item.productId },
+            include: {
+              translations: {
+                where: { language: 'EN' },
+                take: 1
+              }
             }
-          }
-        });
+          });
 
-        // Calculate revenue for this product
-        const revenue = await prisma.orderItem.aggregate({
-          where: {
+          // Calculate revenue for this product
+          const revenue = await prisma.orderItem.aggregate({
+            where: {
+              productId: item.productId,
+              order: {
+                paymentStatus: 'PAID'
+              }
+            },
+            _sum: {
+              price: true
+            }
+          });
+
+          return {
             productId: item.productId,
-            order: {
-              paymentStatus: 'PAID'
-            }
-          },
-          _sum: {
-            price: true
-          }
-        });
-
-        return {
-          productId: item.productId,
-          name: product?.translations[0]?.name || product?.id || 'Unknown',
-          category: product?.category || 'UNKNOWN',
-          image: product?.image || '',
-          quantitySold: item._sum.quantity || 0,
-          revenue: parseFloat(revenue._sum.price || 0) * (item._sum.quantity || 0)
-        };
-      })
+            name: product?.translations[0]?.name || product?.id || 'Unknown',
+            category: product?.category || 'UNKNOWN',
+            image: product?.image || '',
+            quantitySold: item._sum.quantity || 0,
+            revenue: parseFloat(revenue._sum.price || 0) * (item._sum.quantity || 0)
+          };
+        })
     );
 
-    // Revenue by category
+    // Revenue by category (exclude deleted products)
     const revenueByCategory = await prisma.orderItem.groupBy({
       by: ['productId'],
       where: {
+        productId: { not: null },
         order: {
           paymentStatus: 'PAID'
         }
@@ -162,9 +166,11 @@ export async function getAnalytics(req, res) {
       }
     });
 
-    // Aggregate by category
+    // Aggregate by category (skip null productIds)
     const categoryRevenue = {};
     for (const item of revenueByCategory) {
+      if (!item.productId) continue;
+
       const product = await prisma.product.findUnique({
         where: { id: item.productId },
         select: { category: true }
