@@ -815,9 +815,12 @@ export async function getOrderAnalytics(req, res) {
       }
     });
 
-    // Top selling products
+    // Top selling products (exclude deleted products with null productId)
     const topProducts = await prisma.orderItem.groupBy({
       by: ['productId'],
+      where: {
+        productId: { not: null }
+      },
       _sum: {
         quantity: true
       },
@@ -829,23 +832,25 @@ export async function getOrderAnalytics(req, res) {
       take: 5
     });
 
-    // Fetch product details for top products
+    // Fetch product details for top products (filter out null productIds from deleted products)
     const topProductsWithDetails = await Promise.all(
-      topProducts.map(async (item) => {
-        const product = await prisma.product.findUnique({
-          where: { id: item.productId },
-          include: {
-            translations: {
-              where: { language: 'EN' }
+      topProducts
+        .filter(item => item.productId !== null)
+        .map(async (item) => {
+          const product = await prisma.product.findUnique({
+            where: { id: item.productId },
+            include: {
+              translations: {
+                where: { language: 'EN' }
+              }
             }
-          }
-        });
-        return {
-          productId: item.productId,
-          totalSold: item._sum.quantity,
-          product
-        };
-      })
+          });
+          return {
+            productId: item.productId,
+            totalSold: item._sum.quantity,
+            product
+          };
+        })
     );
 
     // Orders this month
