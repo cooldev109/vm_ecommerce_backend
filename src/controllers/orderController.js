@@ -128,7 +128,7 @@ export async function checkout(req, res) {
     }
 
     // Calculate shipping (simple flat rate for now)
-    const shippingCost = subtotal >= 50 ? 0 : 5; // Free shipping over $50
+    const shippingCost = subtotal >= 50000 ? 0 : 5000; // Free shipping over $50,000 CLP
     const total = subtotal + shippingCost;
 
     // Generate order ID
