@@ -25,8 +25,7 @@ async function main() {
         },
       },
     },
-  });
-
+  }); 
   console.log('✅ Admin user created:', admin.email);
 
   // Create test user

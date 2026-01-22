@@ -1,15 +1,15 @@
 import { PrismaClient } from '../generated/prisma/index.js';
 import logger from '../config/logger.js';
-import { webpayTransaction, WEBPAY_CONFIG } from '../config/webpay.js';
+import { FLOW_CONFIG, createFlowPayment, getFlowPaymentStatus, FLOW_STATUS } from '../config/flow.js';
 
 const prisma = new PrismaClient();
 
 /**
- * Initialize Webpay payment for an order
- * POST /api/payments/webpay/init
+ * Initialize Flow payment for an order
+ * POST /api/payments/flow/init
  * Body: { orderId }
  */
-export async function initWebpayPayment(req, res) {
+export async function initFlowPayment(req, res) {
   try {
     const userId = req.user.id;
     const { orderId } = req.body;
@@ -53,55 +53,52 @@ export async function initWebpayPayment(req, res) {
       });
     }
 
-    // Create Webpay transaction
-    const buyOrder = order.id; // Use order ID as buy order
-    const sessionId = userId; // Use user ID as session ID
-    const amount = Math.round(parseFloat(order.total)); // Amount must be integer
-    const returnUrl = WEBPAY_CONFIG.returnUrl;
+    const amount = Math.round(parseFloat(order.total));
 
-    logger.info('Initializing Webpay transaction', {
+    logger.info('Initializing Flow payment', {
       orderId,
       amount,
-      buyOrder,
-      sessionId
+      email: order.email
     });
 
-    // Call Transbank API to create transaction
-    const response = await webpayTransaction.create(
-      buyOrder,
-      sessionId,
+    // Create Flow payment
+    const flowResponse = await createFlowPayment({
+      commerceOrder: orderId,
+      subject: `Pedido ${orderId}`,
       amount,
-      returnUrl
-    );
+      email: order.email,
+      urlConfirmation: FLOW_CONFIG.urls.orderConfirm,
+      urlReturn: FLOW_CONFIG.urls.orderReturn
+    });
 
-    // Store Webpay token in order
-    // Keep payment status as PENDING until Webpay confirms
+    // Store Flow token in order (reusing webpayToken field)
     await prisma.order.update({
       where: { id: orderId },
       data: {
-        webpayToken: response.token
+        webpayToken: flowResponse.token
       }
     });
 
-    logger.info('Webpay transaction created', {
+    logger.info('Flow payment created', {
       orderId,
-      token: response.token
+      token: flowResponse.token,
+      url: flowResponse.url
     });
 
     res.json({
       success: true,
       data: {
-        token: response.token,
-        url: response.url,
+        token: flowResponse.token,
+        url: `${flowResponse.url}?token=${flowResponse.token}`,
         orderId: order.id
       }
     });
   } catch (error) {
-    logger.error('Error initializing Webpay payment:', error);
+    logger.error('Error initializing Flow payment:', error);
     res.status(500).json({
       success: false,
       error: {
-        code: 'WEBPAY_INIT_ERROR',
+        code: 'FLOW_INIT_ERROR',
         message: 'Failed to initialize payment',
         details: process.env.NODE_ENV !== 'production' ? error.message : undefined
       }
@@ -110,103 +107,111 @@ export async function initWebpayPayment(req, res) {
 }
 
 /**
- * Handle Webpay return callback
- * POST /api/payments/webpay/return
- * Body: { token_ws } (from Transbank)
+ * Handle Flow confirmation callback (server-to-server)
+ * POST /api/payments/flow/confirm
+ * Body: { token } (from Flow)
  */
-export async function handleWebpayReturn(req, res) {
+export async function handleFlowConfirm(req, res) {
   try {
-    logger.info('Webpay return received', {
-      body: req.body || {},
-      query: req.query || {},
-      headers: req.headers['content-type']
-    });
-
-    const token = (req.body && req.body.token_ws) || (req.query && req.query.token_ws);
+    const { token } = req.body;
 
     if (!token) {
-      logger.error('No token found in request', { body: req.body, query: req.query });
-      // Redirect to error page - user cancelled or something went wrong
-      const errorUrl = `${WEBPAY_CONFIG.frontendReturnUrl}?status=error`;
-      return res.redirect(errorUrl);
+      logger.error('No token in Flow confirm callback');
+      return res.status(400).json({ success: false, error: 'Missing token' });
     }
 
-    logger.info('Processing Webpay return with token', { token });
+    logger.info('Flow confirm callback received', { token });
 
-    // Commit transaction with Transbank
-    logger.info('Calling Transbank commit API');
-    let response;
-    try {
-      response = await webpayTransaction.commit(token);
-      logger.info('Transbank commit response received', { response });
-    } catch (commitError) {
-      logger.error('Transbank commit API error:', {
-        error: commitError.message,
-        stack: commitError.stack,
-        token
-      });
-      throw commitError;
-    }
+    // Get payment status from Flow
+    const flowStatus = await getFlowPaymentStatus(token);
 
-    logger.info('Webpay transaction committed', {
-      token,
-      status: response.status,
-      buyOrder: response.buy_order,
-      authorizationCode: response.authorization_code
-    });
+    logger.info('Flow payment status', { flowStatus });
 
-    // Find order by webpay token
+    // Find order by Flow token
     const order = await prisma.order.findFirst({
       where: { webpayToken: token }
     });
 
     if (!order) {
-      logger.error('Order not found for Webpay token', { token });
-      // Redirect to error page
-      const errorUrl = `${WEBPAY_CONFIG.frontendReturnUrl}?status=error`;
-      return res.redirect(errorUrl);
+      logger.error('Order not found for Flow token', { token });
+      return res.status(404).json({ success: false, error: 'Order not found' });
     }
 
-    // Check if transaction was approved
-    const isApproved = response.status === 'AUTHORIZED' && response.response_code === 0;
+    // Flow status: 1 = pending, 2 = paid, 3 = rejected, 4 = cancelled
+    const isApproved = flowStatus.status === FLOW_STATUS.PAID;
 
     // Update order with payment result
-    const updatedOrder = await prisma.order.update({
+    await prisma.order.update({
       where: { id: order.id },
       data: {
         paymentStatus: isApproved ? 'PAID' : 'FAILED',
         status: isApproved ? 'PROCESSING' : order.status,
-        webpayTransactionId: response.transaction_date?.toString() || null
+        webpayTransactionId: flowStatus.flowOrder?.toString() || null
       }
     });
 
     if (isApproved) {
       logger.info('Payment approved', {
         orderId: order.id,
-        amount: response.amount,
-        authCode: response.authorization_code
+        flowOrder: flowStatus.flowOrder,
+        amount: flowStatus.amount
       });
     } else {
-      logger.warn('Payment rejected or failed', {
+      logger.warn('Payment rejected', {
         orderId: order.id,
-        status: response.status,
-        responseCode: response.response_code
+        status: flowStatus.status
       });
     }
 
+    // Flow expects a simple response
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error processing Flow confirm:', error);
+    res.status(500).json({ success: false, error: 'Processing error' });
+  }
+}
+
+/**
+ * Handle Flow return callback (user redirect)
+ * GET /api/payments/flow/return
+ * Query: { token } (from Flow)
+ */
+export async function handleFlowReturn(req, res) {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      logger.error('No token in Flow return');
+      return res.redirect(`${FLOW_CONFIG.urls.frontendOrderResult}?status=error`);
+    }
+
+    logger.info('Flow return received', { token });
+
+    // Get payment status from Flow
+    const flowStatus = await getFlowPaymentStatus(token);
+
+    // Find order by Flow token
+    const order = await prisma.order.findFirst({
+      where: { webpayToken: token }
+    });
+
+    if (!order) {
+      logger.error('Order not found for Flow token', { token });
+      return res.redirect(`${FLOW_CONFIG.urls.frontendOrderResult}?status=error`);
+    }
+
+    // Flow status: 2 = paid
+    const isApproved = flowStatus.status === FLOW_STATUS.PAID;
+
     // Redirect to frontend with result
-    const redirectUrl = `${WEBPAY_CONFIG.frontendReturnUrl}?orderId=${order.id}&status=${isApproved ? 'success' : 'failed'}`;
+    const redirectUrl = `${FLOW_CONFIG.urls.frontendOrderResult}?orderId=${order.id}&status=${isApproved ? 'success' : 'failed'}`;
 
     logger.info('Redirecting to frontend', { redirectUrl });
 
-    // Always redirect - this is a Webpay callback endpoint
     return res.redirect(redirectUrl);
   } catch (error) {
-    logger.error('Error processing Webpay return:', error);
-
-    // Always redirect to frontend with error - this is a Webpay callback endpoint
-    const errorUrl = `${WEBPAY_CONFIG.frontendReturnUrl}?status=error`;
-    return res.redirect(errorUrl);
+    logger.error('Error processing Flow return:', error);
+    return res.redirect(`${FLOW_CONFIG.urls.frontendOrderResult}?status=error`);
   }
 }
 
@@ -254,7 +259,7 @@ export async function getPaymentStatus(req, res) {
         orderStatus: order.status,
         paymentStatus: order.paymentStatus,
         total: parseFloat(order.total),
-        hasWebpayToken: !!order.webpayToken,
+        hasPaymentToken: !!order.webpayToken,
         transactionId: order.webpayTransactionId,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt
@@ -318,7 +323,7 @@ export async function getAllPayments(req, res) {
       orderStatus: order.status,
       paymentStatus: order.paymentStatus,
       amount: parseFloat(order.total),
-      hasWebpayToken: !!order.webpayToken,
+      hasPaymentToken: !!order.webpayToken,
       transactionId: order.webpayTransactionId,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt

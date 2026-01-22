@@ -1,7 +1,8 @@
 import express from 'express';
 import {
-  initWebpayPayment,
-  handleWebpayReturn,
+  initFlowPayment,
+  handleFlowReturn,
+  handleFlowConfirm,
   getPaymentStatus,
   getAllPayments
 } from '../controllers/paymentController.js';
@@ -13,12 +14,12 @@ const router = express.Router();
  * User payment routes (require authentication)
  */
 
-// Initialize Webpay payment
-router.post('/webpay/init', authenticate, initWebpayPayment);
+// Initialize Flow payment
+router.post('/flow/init', authenticate, initFlowPayment);
 
-// Webpay return URL (handles both POST and GET from Transbank)
-router.post('/webpay/return', handleWebpayReturn);
-router.get('/webpay/return', handleWebpayReturn);
+// Flow callbacks (no auth - called by Flow servers)
+router.get('/flow/return', handleFlowReturn);  // User redirect
+router.post('/flow/confirm', handleFlowConfirm);  // Server-to-server confirmation
 
 // Get payment status for an order
 router.get('/order/:orderId', authenticate, getPaymentStatus);

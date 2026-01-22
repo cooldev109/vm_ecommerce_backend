@@ -10,11 +10,13 @@ import {
   getAllSubscriptions,
   getSubscriptionAnalytics,
   initSubscriptionPayment,
-  handleSubscriptionWebpayReturn,
+  handleSubscriptionFlowReturn,
+  handleSubscriptionFlowConfirm,
   getSubscriptionPaymentStatus,
   upgradeSubscription,
   initUpgradePayment,
-  handleUpgradeWebpayReturn,
+  handleUpgradeFlowReturn,
+  handleUpgradeFlowConfirm,
   getAdminPlanConfigs,
   updatePlanConfig,
   initializePlanConfigs
@@ -26,11 +28,11 @@ const router = express.Router();
 // Public routes
 router.get('/plans', getSubscriptionPlans);
 
-// Webpay return callbacks (no auth - called by Transbank)
-router.post('/webpay/return', handleSubscriptionWebpayReturn);
-router.get('/webpay/return', handleSubscriptionWebpayReturn); // Some browsers may use GET
-router.post('/upgrade/webpay/return', handleUpgradeWebpayReturn);
-router.get('/upgrade/webpay/return', handleUpgradeWebpayReturn); // Some browsers may use GET
+// Flow callbacks (no auth - called by Flow servers)
+router.get('/flow/return', handleSubscriptionFlowReturn);  // User redirect
+router.post('/flow/confirm', handleSubscriptionFlowConfirm);  // Server-to-server confirmation
+router.get('/upgrade/flow/return', handleUpgradeFlowReturn);  // Upgrade user redirect
+router.post('/upgrade/flow/confirm', handleUpgradeFlowConfirm);  // Upgrade server-to-server
 
 // User routes (authenticated)
 router.get('/my-subscription', authenticate, getUserSubscription);

@@ -1,8 +1,8 @@
 import { PrismaClient } from '../generated/prisma/index.js';
 import logger from '../config/logger.js';
+import { FLOW_CONFIG, createFlowPayment, getFlowPaymentStatus, FLOW_STATUS } from '../config/flow.js';
 
 const prisma = new PrismaClient();
-import { webpayTransaction, WEBPAY_CONFIG } from '../config/webpay.js';
 
 // Default subscription pricing (in Chilean Pesos) - used as fallback if DB is empty
 const DEFAULT_SUBSCRIPTION_PRICES = {
@@ -534,7 +534,7 @@ export const createSubscription = async (req, res) => {
   }
 };
 
-// Initialize Webpay payment for subscription
+// Initialize Flow payment for subscription
 export const initSubscriptionPayment = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -555,6 +555,9 @@ export const initSubscriptionPayment = async (req, res) => {
       where: {
         id: subscriptionId,
         userId
+      },
+      include: {
+        user: true
       }
     });
 
@@ -581,45 +584,41 @@ export const initSubscriptionPayment = async (req, res) => {
 
     const amount = subscription.amount || SUBSCRIPTION_PRICES[subscription.planId];
 
-    // Create Webpay transaction
-    const buyOrder = `SUB-${subscription.id.substring(0, 20)}`; // Prefix with SUB to identify subscription payments
-    const sessionId = userId;
-    const returnUrl = `${WEBPAY_CONFIG.returnUrl.replace('/payments/webpay/return', '/subscriptions/webpay/return')}`;
-
-    logger.info('Initializing Webpay transaction for subscription', {
+    logger.info('Initializing Flow payment for subscription', {
       subscriptionId,
       amount,
-      buyOrder,
-      sessionId,
-      returnUrl
+      email: subscription.user.email
     });
 
-    // Call Transbank API to create transaction
-    const response = await webpayTransaction.create(
-      buyOrder,
-      sessionId,
+    // Create Flow payment
+    const flowResponse = await createFlowPayment({
+      commerceOrder: `SUB-${subscription.id.substring(0, 20)}`,
+      subject: `Suscripción ${subscription.planId}`,
       amount,
-      returnUrl
-    );
+      email: subscription.user.email,
+      urlConfirmation: FLOW_CONFIG.urls.subscriptionConfirm,
+      urlReturn: FLOW_CONFIG.urls.subscriptionReturn
+    });
 
-    // Store Webpay token in subscription
+    // Store Flow token in subscription
     await prisma.subscription.update({
       where: { id: subscriptionId },
       data: {
-        webpayToken: response.token
+        webpayToken: flowResponse.token
       }
     });
 
-    logger.info('Webpay transaction created for subscription', {
+    logger.info('Flow payment created for subscription', {
       subscriptionId,
-      token: response.token
+      token: flowResponse.token,
+      url: flowResponse.url
     });
 
     res.json({
       success: true,
       data: {
-        token: response.token,
-        url: response.url,
+        token: flowResponse.token,
+        url: `${flowResponse.url}?token=${flowResponse.token}`,
         subscriptionId: subscription.id
       }
     });
@@ -628,7 +627,7 @@ export const initSubscriptionPayment = async (req, res) => {
     res.status(500).json({
       success: false,
       error: {
-        code: 'WEBPAY_INIT_ERROR',
+        code: 'FLOW_INIT_ERROR',
         message: 'Failed to initialize payment',
         details: process.env.NODE_ENV !== 'production' ? error.message : undefined
       }
@@ -636,52 +635,34 @@ export const initSubscriptionPayment = async (req, res) => {
   }
 };
 
-// Handle Webpay return callback for subscription
-export const handleSubscriptionWebpayReturn = async (req, res) => {
+// Handle Flow confirmation callback for subscription (server-to-server)
+export const handleSubscriptionFlowConfirm = async (req, res) => {
   try {
-    logger.info('Subscription Webpay return received', {
-      body: req.body || {},
-      query: req.query || {},
-      headers: req.headers['content-type']
-    });
-
-    const token = (req.body && req.body.token_ws) || (req.query && req.query.token_ws);
+    const { token } = req.body;
 
     if (!token) {
-      logger.error('No token found in subscription payment request', { body: req.body, query: req.query });
-      const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error&message=missing_token`;
-      return res.redirect(errorUrl);
+      logger.error('No token in subscription Flow confirm callback');
+      return res.status(400).json({ success: false, error: 'Missing token' });
     }
 
-    logger.info('Processing subscription Webpay return with token', { token });
+    logger.info('Subscription Flow confirm callback received', { token });
 
-    // Commit transaction with Transbank
-    let response;
-    try {
-      response = await webpayTransaction.commit(token);
-      logger.info('Transbank commit response received for subscription', { response });
-    } catch (commitError) {
-      logger.error('Transbank commit API error for subscription:', {
-        error: commitError.message,
-        stack: commitError.stack,
-        token
-      });
-      throw commitError;
-    }
+    // Get payment status from Flow
+    const flowStatus = await getFlowPaymentStatus(token);
+    logger.info('Flow payment status for subscription', { flowStatus });
 
-    // Find subscription by webpay token
+    // Find subscription by Flow token
     const subscription = await prisma.subscription.findFirst({
       where: { webpayToken: token }
     });
 
     if (!subscription) {
-      logger.error('Subscription not found for Webpay token', { token });
-      const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error&message=subscription_not_found`;
-      return res.redirect(errorUrl);
+      logger.error('Subscription not found for Flow token', { token });
+      return res.status(404).json({ success: false, error: 'Subscription not found' });
     }
 
     // Check if transaction was approved
-    const isApproved = response.status === 'AUTHORIZED' && response.response_code === 0;
+    const isApproved = flowStatus.status === FLOW_STATUS.PAID;
 
     if (isApproved) {
       // Calculate expiry date based on plan
@@ -710,41 +691,76 @@ export const handleSubscriptionWebpayReturn = async (req, res) => {
           expiresAt: expiryDate,
           nextRenewal: expiryDate,
           lastPaymentDate: startDate,
-          webpayTransactionId: response.transaction_date?.toString() || null
+          webpayTransactionId: flowStatus.flowOrder?.toString() || null
         }
       });
 
       logger.info('Subscription payment approved and activated', {
         subscriptionId: subscription.id,
-        amount: response.amount,
-        authCode: response.authorization_code
+        flowOrder: flowStatus.flowOrder,
+        amount: flowStatus.amount
       });
-
-      const successUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?subscriptionId=${subscription.id}&status=success`;
-      return res.redirect(successUrl);
     } else {
       // Payment failed
       await prisma.subscription.update({
         where: { id: subscription.id },
         data: {
           paymentStatus: 'FAILED',
-          webpayTransactionId: response.transaction_date?.toString() || null
+          webpayTransactionId: flowStatus.flowOrder?.toString() || null
         }
       });
 
-      logger.warn('Subscription payment rejected or failed', {
+      logger.warn('Subscription payment rejected', {
         subscriptionId: subscription.id,
-        status: response.status,
-        responseCode: response.response_code
+        status: flowStatus.status
       });
+    }
 
-      const failedUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?subscriptionId=${subscription.id}&status=failed`;
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error processing subscription Flow confirm:', error);
+    res.status(500).json({ success: false, error: 'Processing error' });
+  }
+};
+
+// Handle Flow return callback for subscription (user redirect)
+export const handleSubscriptionFlowReturn = async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      logger.error('No token in subscription Flow return');
+      return res.redirect(`${FLOW_CONFIG.urls.frontendSubscriptionResult}?status=error&message=missing_token`);
+    }
+
+    logger.info('Subscription Flow return received', { token });
+
+    // Get payment status from Flow
+    const flowStatus = await getFlowPaymentStatus(token);
+
+    // Find subscription by Flow token
+    const subscription = await prisma.subscription.findFirst({
+      where: { webpayToken: token }
+    });
+
+    if (!subscription) {
+      logger.error('Subscription not found for Flow token', { token });
+      return res.redirect(`${FLOW_CONFIG.urls.frontendSubscriptionResult}?status=error&message=subscription_not_found`);
+    }
+
+    // Check if transaction was approved
+    const isApproved = flowStatus.status === FLOW_STATUS.PAID;
+
+    if (isApproved) {
+      const successUrl = `${FLOW_CONFIG.urls.frontendSubscriptionResult}?subscriptionId=${subscription.id}&status=success`;
+      return res.redirect(successUrl);
+    } else {
+      const failedUrl = `${FLOW_CONFIG.urls.frontendSubscriptionResult}?subscriptionId=${subscription.id}&status=failed`;
       return res.redirect(failedUrl);
     }
   } catch (error) {
-    logger.error('Error processing subscription Webpay return:', error);
-    const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error`;
-    return res.redirect(errorUrl);
+    logger.error('Error processing subscription Flow return:', error);
+    return res.redirect(`${FLOW_CONFIG.urls.frontendSubscriptionResult}?status=error`);
   }
 };
 
@@ -1354,7 +1370,7 @@ export const upgradeSubscription = async (req, res) => {
   }
 };
 
-// Initialize payment for subscription upgrade
+// Initialize Flow payment for subscription upgrade
 export const initUpgradePayment = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -1375,6 +1391,9 @@ export const initUpgradePayment = async (req, res) => {
       where: {
         id: subscriptionId,
         userId
+      },
+      include: {
+        user: true
       }
     });
 
@@ -1388,55 +1407,44 @@ export const initUpgradePayment = async (req, res) => {
       });
     }
 
-    // Create Webpay transaction for upgrade
-    const buyOrder = `UPG-${subscription.id.substring(0, 20)}`; // Prefix with UPG to identify upgrade payments
-    // Use pipe separator to avoid conflict with UUID dashes
-    const sessionId = `${subscriptionId}|${newPlanId}`;
-    // Use backend base URL to construct return URL for upgrades
-    const backendBaseUrl = process.env.BACKEND_URL || 'http://localhost:3000';
-    const returnUrl = `${backendBaseUrl}/api/subscriptions/upgrade/webpay/return`;
-
-    logger.info('Initializing Webpay transaction for subscription upgrade', {
+    logger.info('Initializing Flow payment for subscription upgrade', {
       subscriptionId,
       newPlanId,
       amount,
-      buyOrder,
-      sessionId,
-      returnUrl
+      email: subscription.user.email
     });
 
-    // Call Transbank API to create transaction
-    const response = await webpayTransaction.create(
-      buyOrder,
-      sessionId,
+    // Create Flow payment for upgrade
+    // Include newPlanId in commerceOrder for later retrieval
+    const flowResponse = await createFlowPayment({
+      commerceOrder: `UPG-${subscription.id.substring(0, 15)}-${newPlanId}`,
+      subject: `Upgrade a ${newPlanId}`,
       amount,
-      returnUrl
-    );
+      email: subscription.user.email,
+      urlConfirmation: FLOW_CONFIG.urls.upgradeConfirm,
+      urlReturn: FLOW_CONFIG.urls.upgradeReturn
+    });
 
-    // Store upgrade info temporarily (will be processed after payment)
+    // Store upgrade info temporarily
     await prisma.subscription.update({
       where: { id: subscriptionId },
       data: {
-        webpayToken: response.token,
-        // Store new plan ID in a way we can retrieve it - using amount field temporarily
-        // In production, you'd want a separate SubscriptionUpgrade table
+        webpayToken: flowResponse.token
       }
     });
 
-    // Store upgrade details in session/cache (in production use Redis or similar)
-    // For simplicity, we'll encode it in the session ID
-
-    logger.info('Webpay transaction created for subscription upgrade', {
+    logger.info('Flow payment created for subscription upgrade', {
       subscriptionId,
       newPlanId,
-      token: response.token
+      token: flowResponse.token,
+      url: flowResponse.url
     });
 
     res.json({
       success: true,
       data: {
-        token: response.token,
-        url: response.url,
+        token: flowResponse.token,
+        url: `${flowResponse.url}?token=${flowResponse.token}`,
         subscriptionId: subscription.id,
         newPlanId,
         amount
@@ -1447,7 +1455,7 @@ export const initUpgradePayment = async (req, res) => {
     res.status(500).json({
       success: false,
       error: {
-        code: 'WEBPAY_INIT_ERROR',
+        code: 'FLOW_INIT_ERROR',
         message: 'Failed to initialize upgrade payment',
         details: process.env.NODE_ENV !== 'production' ? error.message : undefined
       }
@@ -1455,58 +1463,40 @@ export const initUpgradePayment = async (req, res) => {
   }
 };
 
-// Handle Webpay return callback for subscription upgrade
-export const handleUpgradeWebpayReturn = async (req, res) => {
+// Handle Flow confirmation callback for subscription upgrade (server-to-server)
+export const handleUpgradeFlowConfirm = async (req, res) => {
   try {
-    logger.info('Subscription upgrade Webpay return received', {
-      body: req.body || {},
-      query: req.query || {},
-      headers: req.headers['content-type']
-    });
-
-    const token = (req.body && req.body.token_ws) || (req.query && req.query.token_ws);
+    const { token } = req.body;
 
     if (!token) {
-      logger.error('No token found in upgrade payment request', { body: req.body, query: req.query });
-      const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error&message=missing_token`;
-      return res.redirect(errorUrl);
+      logger.error('No token in upgrade Flow confirm callback');
+      return res.status(400).json({ success: false, error: 'Missing token' });
     }
 
-    logger.info('Processing upgrade Webpay return with token', { token });
+    logger.info('Upgrade Flow confirm callback received', { token });
 
-    // Commit transaction with Transbank
-    let response;
-    try {
-      response = await webpayTransaction.commit(token);
-      logger.info('Transbank commit response received for upgrade', { response });
-    } catch (commitError) {
-      logger.error('Transbank commit API error for upgrade:', {
-        error: commitError.message,
-        stack: commitError.stack,
-        token
-      });
-      throw commitError;
-    }
+    // Get payment status from Flow
+    const flowStatus = await getFlowPaymentStatus(token);
+    logger.info('Flow payment status for upgrade', { flowStatus });
 
-    // Find subscription by webpay token
+    // Find subscription by Flow token
     const subscription = await prisma.subscription.findFirst({
       where: { webpayToken: token }
     });
 
     if (!subscription) {
-      logger.error('Subscription not found for upgrade Webpay token', { token });
-      const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error&message=subscription_not_found`;
-      return res.redirect(errorUrl);
+      logger.error('Subscription not found for upgrade Flow token', { token });
+      return res.status(404).json({ success: false, error: 'Subscription not found' });
     }
 
     // Check if transaction was approved
-    const isApproved = response.status === 'AUTHORIZED' && response.response_code === 0;
+    const isApproved = flowStatus.status === FLOW_STATUS.PAID;
 
     if (isApproved) {
-      // Determine the new plan from the buy order or session
-      // The sessionId format is: subscriptionId|newPlanId
-      const sessionParts = response.session_id?.split('|') || [];
-      const newPlanId = sessionParts[1] || 'ANNUAL'; // Default to ANNUAL if parsing fails
+      // Extract new plan from commerceOrder (format: UPG-{subscriptionId}-{newPlanId})
+      const commerceOrder = flowStatus.commerceOrder || '';
+      const orderParts = commerceOrder.split('-');
+      const newPlanId = orderParts[orderParts.length - 1] || 'ANNUAL';
 
       // Calculate new expiry date based on new plan
       const startDate = new Date();
@@ -1536,42 +1526,81 @@ export const handleUpgradeWebpayReturn = async (req, res) => {
           nextRenewal: expiryDate,
           lastPaymentDate: startDate,
           amount: SUBSCRIPTION_PRICES[newPlanId],
-          webpayTransactionId: response.transaction_date?.toString() || null
+          webpayTransactionId: flowStatus.flowOrder?.toString() || null
         }
       });
 
       logger.info('Subscription upgrade payment approved and applied', {
         subscriptionId: subscription.id,
         newPlanId,
-        amount: response.amount,
-        authCode: response.authorization_code
+        flowOrder: flowStatus.flowOrder,
+        amount: flowStatus.amount
       });
-
-      const successUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?subscriptionId=${subscription.id}&status=upgraded&plan=${newPlanId}`;
-      return res.redirect(successUrl);
     } else {
-      // Payment failed
+      // Payment failed - keep subscription as is
       await prisma.subscription.update({
         where: { id: subscription.id },
         data: {
-          paymentStatus: 'PAID', // Keep as paid since original subscription is still active
           webpayToken: null // Clear the token
         }
       });
 
-      logger.warn('Subscription upgrade payment rejected or failed', {
+      logger.warn('Subscription upgrade payment rejected', {
         subscriptionId: subscription.id,
-        status: response.status,
-        responseCode: response.response_code
+        status: flowStatus.status
       });
+    }
 
-      const failedUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?subscriptionId=${subscription.id}&status=upgrade_failed`;
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error processing upgrade Flow confirm:', error);
+    res.status(500).json({ success: false, error: 'Processing error' });
+  }
+};
+
+// Handle Flow return callback for subscription upgrade (user redirect)
+export const handleUpgradeFlowReturn = async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      logger.error('No token in upgrade Flow return');
+      return res.redirect(`${FLOW_CONFIG.urls.frontendSubscriptionResult}?status=error&message=missing_token`);
+    }
+
+    logger.info('Upgrade Flow return received', { token });
+
+    // Get payment status from Flow
+    const flowStatus = await getFlowPaymentStatus(token);
+
+    // Find subscription by Flow token
+    const subscription = await prisma.subscription.findFirst({
+      where: { webpayToken: token }
+    });
+
+    if (!subscription) {
+      logger.error('Subscription not found for upgrade Flow token', { token });
+      return res.redirect(`${FLOW_CONFIG.urls.frontendSubscriptionResult}?status=error&message=subscription_not_found`);
+    }
+
+    // Check if transaction was approved
+    const isApproved = flowStatus.status === FLOW_STATUS.PAID;
+
+    if (isApproved) {
+      // Extract new plan from commerceOrder
+      const commerceOrder = flowStatus.commerceOrder || '';
+      const orderParts = commerceOrder.split('-');
+      const newPlanId = orderParts[orderParts.length - 1] || 'ANNUAL';
+
+      const successUrl = `${FLOW_CONFIG.urls.frontendSubscriptionResult}?subscriptionId=${subscription.id}&status=upgraded&plan=${newPlanId}`;
+      return res.redirect(successUrl);
+    } else {
+      const failedUrl = `${FLOW_CONFIG.urls.frontendSubscriptionResult}?subscriptionId=${subscription.id}&status=upgrade_failed`;
       return res.redirect(failedUrl);
     }
   } catch (error) {
-    logger.error('Error processing upgrade Webpay return:', error);
-    const errorUrl = `${WEBPAY_CONFIG.frontendSubscriptionUrl}?status=error`;
-    return res.redirect(errorUrl);
+    logger.error('Error processing upgrade Flow return:', error);
+    return res.redirect(`${FLOW_CONFIG.urls.frontendSubscriptionResult}?status=error`);
   }
 };
 
