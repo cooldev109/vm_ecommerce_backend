@@ -52,6 +52,26 @@ async function main() {
 
   console.log('✅ Test user created:', testUser.email);
 
+  // Create real email test user for Flow payment testing
+  const realEmailTestUser = await prisma.user.upsert({
+    where: { email: 'mazenabass991@gmail.com' },
+    update: {},
+    create: {
+      email: 'mazenabass991@gmail.com',
+      passwordHash: testPasswordHash,
+      role: 'USER',
+      profile: {
+        create: {
+          firstName: 'Mazen',
+          lastName: 'Abass',
+          phone: '+56912345678',
+          customerType: 'INDIVIDUAL',
+        },
+      },
+    },
+  });
+  console.log('✅ Real email test user created:', realEmailTestUser.email);
+
   // Create additional test users for populated admin panel
   const additionalUsers = [
     {
