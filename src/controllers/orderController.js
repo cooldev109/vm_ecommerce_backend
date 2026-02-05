@@ -11,7 +11,7 @@ const prisma = new PrismaClient();
 export async function checkout(req, res) {
   try {
     const userId = req.user.id;
-    const { shippingAddressId, billingAddressId, notes } = req.body;
+    const { shippingAddressId, billingAddressId, notes, testModeFreeShipping } = req.body;
 
     if (!shippingAddressId) {
       return res.status(400).json({
@@ -128,7 +128,8 @@ export async function checkout(req, res) {
     }
 
     // Calculate shipping (simple flat rate for now)
-    const shippingCost = subtotal >= 50000 ? 0 : 5000; // Free shipping over $50,000 CLP
+    // Test mode allows free shipping for testing payments
+    const shippingCost = testModeFreeShipping ? 0 : (subtotal >= 50000 ? 0 : 5000); // Free shipping over $50,000 CLP
     const total = subtotal + shippingCost;
 
     // Generate order ID
