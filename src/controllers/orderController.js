@@ -11,7 +11,7 @@ const prisma = new PrismaClient();
 export async function checkout(req, res) {
   try {
     const userId = req.user.id;
-    const { shippingAddressId, billingAddressId, notes, testModeFreeShipping } = req.body;
+    const { shippingAddressId, billingAddressId, notes, testModeFreeShipping, testModeZeroPrices } = req.body;
 
     if (!shippingAddressId) {
       return res.status(400).json({
@@ -100,14 +100,15 @@ export async function checkout(req, res) {
         });
       }
 
-      const itemPrice = parseFloat(product.price);
+      // In test mode with zero prices, set price to 0
+      const itemPrice = testModeZeroPrices ? 0 : parseFloat(product.price);
       const itemSubtotal = itemPrice * item.quantity;
       subtotal += itemSubtotal;
 
       orderItems.push({
         productId: product.id,
         quantity: item.quantity,
-        priceAtOrder: product.price
+        priceAtOrder: testModeZeroPrices ? 0 : product.price
       });
     }
 
