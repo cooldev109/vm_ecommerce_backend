@@ -11,7 +11,7 @@ const prisma = new PrismaClient();
 export async function checkout(req, res) {
   try {
     const userId = req.user.id;
-    const { shippingAddressId, billingAddressId, notes, testModeFreeShipping, testModeZeroPrices } = req.body;
+    const { shippingAddressId, billingAddressId, notes, testModeFreeShipping } = req.body;
 
     if (!shippingAddressId) {
       return res.status(400).json({
@@ -100,15 +100,15 @@ export async function checkout(req, res) {
         });
       }
 
-      // In test mode with zero prices, set price to 0
-      const itemPrice = testModeZeroPrices ? 0 : parseFloat(product.price);
+      // Always store real prices in database for records
+      const itemPrice = parseFloat(product.price);
       const itemSubtotal = itemPrice * item.quantity;
       subtotal += itemSubtotal;
 
       orderItems.push({
         productId: product.id,
         quantity: item.quantity,
-        priceAtOrder: testModeZeroPrices ? 0 : product.price
+        priceAtOrder: product.price  // Always store real price
       });
     }
 
@@ -129,7 +129,7 @@ export async function checkout(req, res) {
     }
 
     // Calculate shipping (simple flat rate for now)
-    // Test mode allows free shipping for testing payments
+    // Note: If test mode prices are enabled, product.price is $0 so subtotal is $0
     const shippingCost = testModeFreeShipping ? 0 : (subtotal >= 50000 ? 0 : 5000); // Free shipping over $50,000 CLP
     const total = subtotal + shippingCost;
 

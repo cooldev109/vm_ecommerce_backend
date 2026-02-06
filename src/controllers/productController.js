@@ -603,3 +603,157 @@ export async function removeProductAudio(req, res) {
     });
   }
 }
+
+/**
+ * Set all product prices to $0 for testing (Admin only)
+ * POST /api/admin/products/test-mode/enable
+ * Saves original prices to originalPrice field before setting to 0
+ */
+export async function enableTestModePrices(req, res) {
+  try {
+    // Get all products
+    const products = await prisma.product.findMany();
+
+    // Check if test mode is already enabled (any product has originalPrice set)
+    const alreadyEnabled = products.some(p => p.originalPrice !== null);
+
+    if (alreadyEnabled) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'TEST_MODE_ALREADY_ENABLED',
+          message: 'Test mode is already enabled. Restore prices first.',
+        },
+      });
+    }
+
+    // Save original prices and set all to 0
+    await prisma.$transaction(
+      products.map(product =>
+        prisma.product.update({
+          where: { id: product.id },
+          data: {
+            originalPrice: product.price,
+            price: 0,
+          },
+        })
+      )
+    );
+
+    logger.info('Test mode prices enabled', {
+      userId: req.user.id,
+      productsUpdated: products.length,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        message: 'All prices set to $0 for testing',
+        productsUpdated: products.length,
+      },
+    });
+  } catch (error) {
+    logger.error('Enable test mode prices error:', error);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'ENABLE_TEST_MODE_FAILED',
+        message: 'Failed to enable test mode prices',
+      },
+    });
+  }
+}
+
+/**
+ * Restore original product prices (Admin only)
+ * POST /api/admin/products/test-mode/disable
+ * Restores prices from originalPrice field
+ */
+export async function disableTestModePrices(req, res) {
+  try {
+    // Get all products with original prices
+    const products = await prisma.product.findMany({
+      where: {
+        originalPrice: { not: null },
+      },
+    });
+
+    if (products.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'TEST_MODE_NOT_ENABLED',
+          message: 'Test mode is not enabled. No prices to restore.',
+        },
+      });
+    }
+
+    // Restore original prices and clear originalPrice field
+    await prisma.$transaction(
+      products.map(product =>
+        prisma.product.update({
+          where: { id: product.id },
+          data: {
+            price: product.originalPrice,
+            originalPrice: null,
+          },
+        })
+      )
+    );
+
+    logger.info('Test mode prices disabled', {
+      userId: req.user.id,
+      productsRestored: products.length,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        message: 'All prices restored to original values',
+        productsRestored: products.length,
+      },
+    });
+  } catch (error) {
+    logger.error('Disable test mode prices error:', error);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'DISABLE_TEST_MODE_FAILED',
+        message: 'Failed to restore prices',
+      },
+    });
+  }
+}
+
+/**
+ * Get test mode status (Admin only)
+ * GET /api/admin/products/test-mode/status
+ */
+export async function getTestModeStatus(req, res) {
+  try {
+    // Check if any product has originalPrice set
+    const testModeProduct = await prisma.product.findFirst({
+      where: {
+        originalPrice: { not: null },
+      },
+    });
+
+    const isEnabled = testModeProduct !== null;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        testModeEnabled: isEnabled,
+      },
+    });
+  } catch (error) {
+    logger.error('Get test mode status error:', error);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'GET_TEST_MODE_STATUS_FAILED',
+        message: 'Failed to get test mode status',
+      },
+    });
+  }
+}

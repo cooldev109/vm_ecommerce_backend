@@ -96,6 +96,7 @@ model Product {
   id         String              @id // String IDs: '1', '2', 'acc-1'
   category   ProductCategory
   price      Decimal             @db.Decimal(10, 2)
+  originalPrice Decimal?         @db.Decimal(10, 2) @map("original_price") // Backup for test mode
   image      String // Primary image URL
   images     String[] // Gallery images
   audioUrl   String?             @map("audio_url") // Audio experience URL

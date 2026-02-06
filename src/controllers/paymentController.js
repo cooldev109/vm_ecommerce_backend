@@ -53,6 +53,7 @@ export async function initFlowPayment(req, res) {
       });
     }
 
+    // Use order total (will be $0 if test mode prices are enabled in database)
     const amount = Math.round(parseFloat(order.total));
 
     logger.info('Initializing Flow payment', {

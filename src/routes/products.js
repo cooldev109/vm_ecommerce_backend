@@ -9,11 +9,39 @@ import {
   upsertProductTranslation,
   updateProductAudio,
   removeProductAudio,
+  enableTestModePrices,
+  disableTestModePrices,
+  getTestModeStatus,
 } from '../controllers/productController.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { createProductReview, getReviewsForProduct } from './reviews.js';
 
 const router = express.Router();
+
+/**
+ * Test Mode Routes (Admin only) - MUST be before /:id to avoid matching
+ */
+
+/**
+ * @route   GET /api/products/test-mode/status
+ * @desc    Get test mode status
+ * @access  Private (Admin only)
+ */
+router.get('/test-mode/status', authenticate, requireAdmin, getTestModeStatus);
+
+/**
+ * @route   POST /api/products/test-mode/enable
+ * @desc    Enable test mode (set all prices to $0)
+ * @access  Private (Admin only)
+ */
+router.post('/test-mode/enable', authenticate, requireAdmin, enableTestModePrices);
+
+/**
+ * @route   POST /api/products/test-mode/disable
+ * @desc    Disable test mode (restore original prices)
+ * @access  Private (Admin only)
+ */
+router.post('/test-mode/disable', authenticate, requireAdmin, disableTestModePrices);
 
 /**
  * Public Routes
