@@ -726,6 +726,52 @@ export async function disableTestModePrices(req, res) {
 }
 
 /**
+ * Reset all product data (Admin only)
+ * DELETE /api/admin/products/reset-all
+ * Deletes all products, translations, reviews, wishlist items, and cart items
+ */
+export async function resetAllProducts(req, res) {
+  try {
+    // Delete in order to respect foreign key constraints
+    const deletedCartItems = await prisma.cartItem.deleteMany({});
+    const deletedWishlistItems = await prisma.wishlistItem.deleteMany({});
+    const deletedReviews = await prisma.productReview.deleteMany({});
+    const deletedTranslations = await prisma.productTranslation.deleteMany({});
+    const deletedProducts = await prisma.product.deleteMany({});
+
+    logger.info('All product data reset', {
+      userId: req.user.id,
+      deletedProducts: deletedProducts.count,
+      deletedTranslations: deletedTranslations.count,
+      deletedReviews: deletedReviews.count,
+      deletedWishlistItems: deletedWishlistItems.count,
+      deletedCartItems: deletedCartItems.count,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        message: 'All product data has been reset',
+        deletedProducts: deletedProducts.count,
+        deletedTranslations: deletedTranslations.count,
+        deletedReviews: deletedReviews.count,
+        deletedWishlistItems: deletedWishlistItems.count,
+        deletedCartItems: deletedCartItems.count,
+      },
+    });
+  } catch (error) {
+    logger.error('Reset all products error:', error);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'RESET_PRODUCTS_FAILED',
+        message: 'Failed to reset product data',
+      },
+    });
+  }
+}
+
+/**
  * Get test mode status (Admin only)
  * GET /api/admin/products/test-mode/status
  */

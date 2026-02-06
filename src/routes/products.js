@@ -12,6 +12,7 @@ import {
   enableTestModePrices,
   disableTestModePrices,
   getTestModeStatus,
+  resetAllProducts,
 } from '../controllers/productController.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { createProductReview, getReviewsForProduct } from './reviews.js';
@@ -42,6 +43,13 @@ router.post('/test-mode/enable', authenticate, requireAdmin, enableTestModePrice
  * @access  Private (Admin only)
  */
 router.post('/test-mode/disable', authenticate, requireAdmin, disableTestModePrices);
+
+/**
+ * @route   DELETE /api/products/reset-all
+ * @desc    Reset all product data (delete all products, translations, reviews, etc.)
+ * @access  Private (Admin only)
+ */
+router.delete('/reset-all', authenticate, requireAdmin, resetAllProducts);
 
 /**
  * Public Routes
