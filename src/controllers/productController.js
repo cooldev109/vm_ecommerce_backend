@@ -728,7 +728,7 @@ export async function disableTestModePrices(req, res) {
 /**
  * Reset all product data (Admin only)
  * DELETE /api/admin/products/reset-all
- * Deletes all products, translations, reviews, wishlist items, and cart items
+ * Deletes all products, translations, reviews, wishlist items, cart items, and audio content
  */
 export async function resetAllProducts(req, res) {
   try {
@@ -738,25 +738,28 @@ export async function resetAllProducts(req, res) {
     const deletedReviews = await prisma.productReview.deleteMany({});
     const deletedTranslations = await prisma.productTranslation.deleteMany({});
     const deletedProducts = await prisma.product.deleteMany({});
+    const deletedAudioContent = await prisma.audioContent.deleteMany({});
 
-    logger.info('All product data reset', {
+    logger.info('All product and audio data reset', {
       userId: req.user.id,
       deletedProducts: deletedProducts.count,
       deletedTranslations: deletedTranslations.count,
       deletedReviews: deletedReviews.count,
       deletedWishlistItems: deletedWishlistItems.count,
       deletedCartItems: deletedCartItems.count,
+      deletedAudioContent: deletedAudioContent.count,
     });
 
     return res.status(200).json({
       success: true,
       data: {
-        message: 'All product data has been reset',
+        message: 'All product and audio data has been reset',
         deletedProducts: deletedProducts.count,
         deletedTranslations: deletedTranslations.count,
         deletedReviews: deletedReviews.count,
         deletedWishlistItems: deletedWishlistItems.count,
         deletedCartItems: deletedCartItems.count,
+        deletedAudioContent: deletedAudioContent.count,
       },
     });
   } catch (error) {
