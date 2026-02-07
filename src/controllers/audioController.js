@@ -262,11 +262,12 @@ export async function streamAudio(req, res) {
     }
 
     // Check plan-specific access
+    // Plan hierarchy: WEEKLY < MONTHLY < QUARTERLY
     if (audio.requiredPlan) {
-      const hasRequiredPlan =
-        planId === audio.requiredPlan ||
-        planId === 'ANNUAL' ||
-        (planId === 'QUARTERLY' && audio.requiredPlan === 'MONTHLY');
+      const planHierarchy = { WEEKLY: 1, MONTHLY: 2, QUARTERLY: 3 };
+      const userPlanLevel = planHierarchy[planId] || 0;
+      const requiredLevel = planHierarchy[audio.requiredPlan] || 0;
+      const hasRequiredPlan = userPlanLevel >= requiredLevel;
 
       if (!hasRequiredPlan) {
         return res.status(403).json({
