@@ -6,9 +6,9 @@ const prisma = new PrismaClient();
 
 // Default subscription pricing (in Chilean Pesos) - used as fallback if DB is empty
 const DEFAULT_SUBSCRIPTION_PRICES = {
-  MONTHLY: 9990,   // ~$13 USD
-  QUARTERLY: 25990, // ~$34 USD (13% discount)
-  ANNUAL: 89990     // ~$117 USD (25% discount)
+  WEEKLY: 2990,     // ~$4 USD per week
+  MONTHLY: 9990,    // ~$13 USD per month (16% discount vs weekly)
+  QUARTERLY: 25990  // ~$34 USD per quarter (28% discount vs weekly)
 };
 
 // Cache for subscription prices (loaded from DB)
@@ -65,17 +65,19 @@ export const getSubscriptionPlans = async (req, res) => {
       });
     }
 
-    // Get monthly price for savings calculation
-    const monthlyConfig = configs.find(c => c.id === 'MONTHLY');
-    const monthlyPrice = monthlyConfig?.price || DEFAULT_SUBSCRIPTION_PRICES.MONTHLY;
+    // Get weekly price for savings calculation
+    const weeklyConfig = configs.find(c => c.id === 'WEEKLY');
+    const weeklyPrice = weeklyConfig?.price || DEFAULT_SUBSCRIPTION_PRICES.WEEKLY;
 
     // Format plans from database configs
     const plans = configs.map(config => {
       let savings = 0;
-      if (config.id === 'QUARTERLY') {
-        savings = Math.round(monthlyPrice * 3 - config.price);
-      } else if (config.id === 'ANNUAL') {
-        savings = Math.round(monthlyPrice * 12 - config.price);
+      if (config.id === 'MONTHLY') {
+        // Monthly vs 4 weeks of weekly
+        savings = Math.round(weeklyPrice * 4 - config.price);
+      } else if (config.id === 'QUARTERLY') {
+        // Quarterly vs 12 weeks of weekly
+        savings = Math.round(weeklyPrice * 12 - config.price);
       }
 
       return {
@@ -113,12 +115,35 @@ export const getSubscriptionPlans = async (req, res) => {
 function getDefaultPlans() {
   return [
     {
+      id: 'WEEKLY',
+      name: 'Weekly Premium',
+      nameEs: 'Premium Semanal',
+      price: DEFAULT_SUBSCRIPTION_PRICES.WEEKLY,
+      billingPeriod: 'week',
+      billingPeriodEs: 'semana',
+      features: [
+        'Access to basic audio experiences',
+        'Try before committing long-term',
+        'Basic meditation content',
+        '5% discount on purchases',
+        'Email support'
+      ],
+      featuresEs: [
+        'Acceso a experiencias de audio básicas',
+        'Prueba antes de comprometerte a largo plazo',
+        'Contenido básico de meditación',
+        '5% de descuento en compras',
+        'Soporte por email'
+      ]
+    },
+    {
       id: 'MONTHLY',
       name: 'Monthly Premium',
       nameEs: 'Premium Mensual',
       price: DEFAULT_SUBSCRIPTION_PRICES.MONTHLY,
       billingPeriod: 'month',
       billingPeriodEs: 'mes',
+      savings: Math.round((DEFAULT_SUBSCRIPTION_PRICES.WEEKLY * 4 - DEFAULT_SUBSCRIPTION_PRICES.MONTHLY)),
       features: [
         'Unlimited access to all audio experiences',
         'Early access to new candle releases',
@@ -132,7 +157,8 @@ function getDefaultPlans() {
         'Contenido exclusivo de meditación y relajación',
         '10% de descuento en todas las compras',
         'Soporte al cliente prioritario'
-      ]
+      ],
+      popular: true
     },
     {
       id: 'QUARTERLY',
@@ -141,45 +167,21 @@ function getDefaultPlans() {
       price: DEFAULT_SUBSCRIPTION_PRICES.QUARTERLY,
       billingPeriod: '3 months',
       billingPeriodEs: '3 meses',
-      savings: Math.round((DEFAULT_SUBSCRIPTION_PRICES.MONTHLY * 3 - DEFAULT_SUBSCRIPTION_PRICES.QUARTERLY)),
+      savings: Math.round((DEFAULT_SUBSCRIPTION_PRICES.WEEKLY * 12 - DEFAULT_SUBSCRIPTION_PRICES.QUARTERLY)),
       features: [
         'All Monthly Premium features',
-        'Save 13% compared to monthly',
+        'Save 28% compared to weekly',
         'Exclusive quarterly curated playlists',
         'Free shipping on all orders',
-        'Birthday gift - special candle'
-      ],
-      featuresEs: [
-        'Todas las características del Premium Mensual',
-        'Ahorra 13% comparado con mensual',
-        'Listas de reproducción exclusivas trimestrales',
-        'Envío gratis en todos los pedidos',
-        'Regalo de cumpleaños - vela especial'
-      ],
-      popular: true
-    },
-    {
-      id: 'ANNUAL',
-      name: 'Annual Premium',
-      nameEs: 'Premium Anual',
-      price: DEFAULT_SUBSCRIPTION_PRICES.ANNUAL,
-      billingPeriod: 'year',
-      billingPeriodEs: 'año',
-      savings: Math.round((DEFAULT_SUBSCRIPTION_PRICES.MONTHLY * 12 - DEFAULT_SUBSCRIPTION_PRICES.ANNUAL)),
-      features: [
-        'All Quarterly Premium features',
-        'Save 25% compared to monthly',
-        'Exclusive annual member events',
-        'Free candle every quarter',
-        'Lifetime 15% discount on all products',
+        'Birthday gift - special candle',
         'Personalized scent consultation'
       ],
       featuresEs: [
-        'Todas las características del Premium Trimestral',
-        'Ahorra 25% comparado con mensual',
-        'Eventos exclusivos para miembros anuales',
-        'Vela gratis cada trimestre',
-        'Descuento permanente del 15% en todos los productos',
+        'Todas las características del Premium Mensual',
+        'Ahorra 28% comparado con semanal',
+        'Listas de reproducción exclusivas trimestrales',
+        'Envío gratis en todos los pedidos',
+        'Regalo de cumpleaños - vela especial',
         'Consulta de fragancias personalizada'
       ],
       bestValue: true
@@ -231,7 +233,7 @@ export const updatePlanConfig = async (req, res) => {
     } = req.body;
 
     // Validate planId
-    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(planId)) {
+    if (!['WEEKLY', 'MONTHLY', 'QUARTERLY'].includes(planId)) {
       return res.status(400).json({
         success: false,
         error: {
@@ -299,6 +301,32 @@ export const initializePlanConfigs = async (req, res) => {
   try {
     const defaultConfigs = [
       {
+        id: 'WEEKLY',
+        price: 2990,
+        nameEn: 'Weekly Premium',
+        nameEs: 'Premium Semanal',
+        billingPeriodEn: 'week',
+        billingPeriodEs: 'semana',
+        featuresEn: [
+          'Access to basic audio experiences',
+          'Try before committing long-term',
+          'Basic meditation content',
+          '5% discount on purchases',
+          'Email support'
+        ],
+        featuresEs: [
+          'Acceso a experiencias de audio básicas',
+          'Prueba antes de comprometerte a largo plazo',
+          'Contenido básico de meditación',
+          '5% de descuento en compras',
+          'Soporte por email'
+        ],
+        isPopular: false,
+        isBestValue: false,
+        isActive: true,
+        sortOrder: 1
+      },
+      {
         id: 'MONTHLY',
         price: 9990,
         nameEn: 'Monthly Premium',
@@ -319,10 +347,10 @@ export const initializePlanConfigs = async (req, res) => {
           '10% de descuento en todas las compras',
           'Soporte al cliente prioritario'
         ],
-        isPopular: false,
+        isPopular: true,
         isBestValue: false,
         isActive: true,
-        sortOrder: 1
+        sortOrder: 2
       },
       {
         id: 'QUARTERLY',
@@ -333,44 +361,18 @@ export const initializePlanConfigs = async (req, res) => {
         billingPeriodEs: '3 meses',
         featuresEn: [
           'All Monthly Premium features',
-          'Save 13% compared to monthly',
+          'Save 28% compared to weekly',
           'Exclusive quarterly curated playlists',
           'Free shipping on all orders',
-          'Birthday gift - special candle'
-        ],
-        featuresEs: [
-          'Todas las características del Premium Mensual',
-          'Ahorra 13% comparado con mensual',
-          'Listas de reproducción exclusivas trimestrales',
-          'Envío gratis en todos los pedidos',
-          'Regalo de cumpleaños - vela especial'
-        ],
-        isPopular: true,
-        isBestValue: false,
-        isActive: true,
-        sortOrder: 2
-      },
-      {
-        id: 'ANNUAL',
-        price: 89990,
-        nameEn: 'Annual Premium',
-        nameEs: 'Premium Anual',
-        billingPeriodEn: 'year',
-        billingPeriodEs: 'año',
-        featuresEn: [
-          'All Quarterly Premium features',
-          'Save 25% compared to monthly',
-          'Exclusive annual member events',
-          'Free candle every quarter',
-          'Lifetime 15% discount on all products',
+          'Birthday gift - special candle',
           'Personalized scent consultation'
         ],
         featuresEs: [
-          'Todas las características del Premium Trimestral',
-          'Ahorra 25% comparado con mensual',
-          'Eventos exclusivos para miembros anuales',
-          'Vela gratis cada trimestre',
-          'Descuento permanente del 15% en todos los productos',
+          'Todas las características del Premium Mensual',
+          'Ahorra 28% comparado con semanal',
+          'Listas de reproducción exclusivas trimestrales',
+          'Envío gratis en todos los pedidos',
+          'Regalo de cumpleaños - vela especial',
           'Consulta de fragancias personalizada'
         ],
         isPopular: false,
@@ -457,7 +459,7 @@ export const createSubscription = async (req, res) => {
     const { planId } = req.body;
 
     // Validate plan
-    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(planId)) {
+    if (!['WEEKLY', 'MONTHLY', 'QUARTERLY'].includes(planId)) {
       return res.status(400).json({
         success: false,
         error: {
@@ -670,14 +672,14 @@ export const handleSubscriptionFlowConfirm = async (req, res) => {
       const expiryDate = new Date(startDate);
 
       switch (subscription.planId) {
+        case 'WEEKLY':
+          expiryDate.setDate(expiryDate.getDate() + 7);
+          break;
         case 'MONTHLY':
           expiryDate.setMonth(expiryDate.getMonth() + 1);
           break;
         case 'QUARTERLY':
           expiryDate.setMonth(expiryDate.getMonth() + 3);
-          break;
-        case 'ANNUAL':
-          expiryDate.setFullYear(expiryDate.getFullYear() + 1);
           break;
       }
 
@@ -869,7 +871,7 @@ export const updateSubscription = async (req, res) => {
     }
 
     // Change plan (upgrade/downgrade)
-    if (newPlanId && ['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(newPlanId)) {
+    if (newPlanId && ['WEEKLY', 'MONTHLY', 'QUARTERLY'].includes(newPlanId)) {
       updateData.planId = newPlanId;
 
       // Recalculate next renewal based on new plan
@@ -877,14 +879,14 @@ export const updateSubscription = async (req, res) => {
       const newExpiryDate = new Date(currentDate);
 
       switch (newPlanId) {
+        case 'WEEKLY':
+          newExpiryDate.setDate(newExpiryDate.getDate() + 7);
+          break;
         case 'MONTHLY':
           newExpiryDate.setMonth(newExpiryDate.getMonth() + 1);
           break;
         case 'QUARTERLY':
           newExpiryDate.setMonth(newExpiryDate.getMonth() + 3);
-          break;
-        case 'ANNUAL':
-          newExpiryDate.setFullYear(newExpiryDate.getFullYear() + 1);
           break;
       }
 
@@ -1157,18 +1159,18 @@ export const getSubscriptionAnalytics = async (req, res) => {
       totalCancelled,
       totalPaused,
       totalExpired,
+      weeklyCount,
       monthlyCount,
       quarterlyCount,
-      annualCount,
       recentSubscriptions
     ] = await Promise.all([
       prisma.subscription.count({ where: { status: 'ACTIVE' } }),
       prisma.subscription.count({ where: { status: 'CANCELLED' } }),
       prisma.subscription.count({ where: { status: 'PAUSED' } }),
       prisma.subscription.count({ where: { status: 'EXPIRED' } }),
+      prisma.subscription.count({ where: { planId: 'WEEKLY', status: 'ACTIVE' } }),
       prisma.subscription.count({ where: { planId: 'MONTHLY', status: 'ACTIVE' } }),
       prisma.subscription.count({ where: { planId: 'QUARTERLY', status: 'ACTIVE' } }),
-      prisma.subscription.count({ where: { planId: 'ANNUAL', status: 'ACTIVE' } }),
       prisma.subscription.findMany({
         take: 10,
         orderBy: { createdAt: 'desc' },
@@ -1183,10 +1185,11 @@ export const getSubscriptionAnalytics = async (req, res) => {
     ]);
 
     // Calculate Monthly Recurring Revenue (MRR)
+    // Weekly: multiply by ~4.33 (avg weeks per month)
+    const weeklyMRR = weeklyCount * (SUBSCRIPTION_PRICES.WEEKLY * 4.33);
     const monthlyMRR = monthlyCount * SUBSCRIPTION_PRICES.MONTHLY;
     const quarterlyMRR = quarterlyCount * (SUBSCRIPTION_PRICES.QUARTERLY / 3);
-    const annualMRR = annualCount * (SUBSCRIPTION_PRICES.ANNUAL / 12);
-    const totalMRR = monthlyMRR + quarterlyMRR + annualMRR;
+    const totalMRR = weeklyMRR + monthlyMRR + quarterlyMRR;
 
     res.json({
       success: true,
@@ -1199,9 +1202,9 @@ export const getSubscriptionAnalytics = async (req, res) => {
           totalSubscriptions: totalActive + totalCancelled + totalPaused + totalExpired
         },
         planBreakdown: {
+          weekly: weeklyCount,
           monthly: monthlyCount,
-          quarterly: quarterlyCount,
-          annual: annualCount
+          quarterly: quarterlyCount
         },
         revenue: {
           mrr: Math.round(totalMRR),
@@ -1231,7 +1234,7 @@ export const upgradeSubscription = async (req, res) => {
     const { newPlanId } = req.body;
 
     // Validate new plan
-    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(newPlanId)) {
+    if (!['WEEKLY', 'MONTHLY', 'QUARTERLY'].includes(newPlanId)) {
       return res.status(400).json({
         success: false,
         error: {
@@ -1290,7 +1293,7 @@ export const upgradeSubscription = async (req, res) => {
     }
 
     // Calculate plan hierarchy (higher = better)
-    const planHierarchy = { MONTHLY: 1, QUARTERLY: 2, ANNUAL: 3 };
+    const planHierarchy = { WEEKLY: 1, MONTHLY: 2, QUARTERLY: 3 };
     const currentPlanLevel = planHierarchy[subscription.planId];
     const newPlanLevel = planHierarchy[newPlanId];
     const isUpgrade = newPlanLevel > currentPlanLevel;
@@ -1496,21 +1499,21 @@ export const handleUpgradeFlowConfirm = async (req, res) => {
       // Extract new plan from commerceOrder (format: UPG-{subscriptionId}-{newPlanId})
       const commerceOrder = flowStatus.commerceOrder || '';
       const orderParts = commerceOrder.split('-');
-      const newPlanId = orderParts[orderParts.length - 1] || 'ANNUAL';
+      const newPlanId = orderParts[orderParts.length - 1] || 'QUARTERLY';
 
       // Calculate new expiry date based on new plan
       const startDate = new Date();
       const expiryDate = new Date(startDate);
 
       switch (newPlanId) {
+        case 'WEEKLY':
+          expiryDate.setDate(expiryDate.getDate() + 7);
+          break;
         case 'MONTHLY':
           expiryDate.setMonth(expiryDate.getMonth() + 1);
           break;
         case 'QUARTERLY':
           expiryDate.setMonth(expiryDate.getMonth() + 3);
-          break;
-        case 'ANNUAL':
-          expiryDate.setFullYear(expiryDate.getFullYear() + 1);
           break;
       }
 
@@ -1590,7 +1593,7 @@ export const handleUpgradeFlowReturn = async (req, res) => {
       // Extract new plan from commerceOrder
       const commerceOrder = flowStatus.commerceOrder || '';
       const orderParts = commerceOrder.split('-');
-      const newPlanId = orderParts[orderParts.length - 1] || 'ANNUAL';
+      const newPlanId = orderParts[orderParts.length - 1] || 'QUARTERLY';
 
       const successUrl = `${FLOW_CONFIG.urls.frontendSubscriptionResult}?subscriptionId=${subscription.id}&status=upgraded&plan=${newPlanId}`;
       return res.redirect(successUrl);
@@ -1631,14 +1634,14 @@ export const processSubscriptionRenewals = async () => {
         const newExpiryDate = new Date(subscription.nextRenewal);
 
         switch (subscription.planId) {
+          case 'WEEKLY':
+            newExpiryDate.setDate(newExpiryDate.getDate() + 7);
+            break;
           case 'MONTHLY':
             newExpiryDate.setMonth(newExpiryDate.getMonth() + 1);
             break;
           case 'QUARTERLY':
             newExpiryDate.setMonth(newExpiryDate.getMonth() + 3);
-            break;
-          case 'ANNUAL':
-            newExpiryDate.setFullYear(newExpiryDate.getFullYear() + 1);
             break;
         }
 

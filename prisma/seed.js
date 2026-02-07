@@ -253,17 +253,17 @@ async function main() {
     { titleKey: 'innerPeace', category: 'MEDITATION', durationSeconds: 1500, isPreview: false, requiredPlan: null },
     { titleKey: 'sleepMeditation', category: 'MEDITATION', durationSeconds: 1800, isPreview: false, requiredPlan: null },
 
-    // Quarterly plan content (MEDITATION tracks with healing themes)
-    { titleKey: 'healingFrequency432', category: 'MEDITATION', durationSeconds: 2400, isPreview: false, requiredPlan: 'QUARTERLY' },
-    { titleKey: 'chakraBalance', category: 'MEDITATION', durationSeconds: 2700, isPreview: false, requiredPlan: 'QUARTERLY' },
-    { titleKey: 'tibetanBowls', category: 'AMBIENT', durationSeconds: 3000, isPreview: false, requiredPlan: 'QUARTERLY' },
-    { titleKey: 'binauralBeats', category: 'AMBIENT', durationSeconds: 3600, isPreview: false, requiredPlan: 'QUARTERLY' },
+    // Monthly plan content (premium MEDITATION tracks)
+    { titleKey: 'healingFrequency432', category: 'MEDITATION', durationSeconds: 2400, isPreview: false, requiredPlan: 'MONTHLY' },
+    { titleKey: 'chakraBalance', category: 'MEDITATION', durationSeconds: 2700, isPreview: false, requiredPlan: 'MONTHLY' },
+    { titleKey: 'tibetanBowls', category: 'AMBIENT', durationSeconds: 3000, isPreview: false, requiredPlan: 'MONTHLY' },
+    { titleKey: 'binauralBeats', category: 'AMBIENT', durationSeconds: 3600, isPreview: false, requiredPlan: 'MONTHLY' },
 
-    // Annual plan exclusive content (premium AMBIENT and MEDITATION)
-    { titleKey: 'exclusiveMasterclass', category: 'MEDITATION', durationSeconds: 5400, isPreview: false, requiredPlan: 'ANNUAL' },
-    { titleKey: 'premiumRetreat', category: 'MEDITATION', durationSeconds: 7200, isPreview: false, requiredPlan: 'ANNUAL' },
-    { titleKey: 'seasonalCollection', category: 'AMBIENT', durationSeconds: 4800, isPreview: false, requiredPlan: 'ANNUAL' },
-    { titleKey: 'liveSessionRecording', category: 'MEDITATION', durationSeconds: 5400, isPreview: false, requiredPlan: 'ANNUAL' },
+    // Quarterly plan exclusive content (premium AMBIENT and MEDITATION)
+    { titleKey: 'exclusiveMasterclass', category: 'MEDITATION', durationSeconds: 5400, isPreview: false, requiredPlan: 'QUARTERLY' },
+    { titleKey: 'premiumRetreat', category: 'MEDITATION', durationSeconds: 7200, isPreview: false, requiredPlan: 'QUARTERLY' },
+    { titleKey: 'seasonalCollection', category: 'AMBIENT', durationSeconds: 4800, isPreview: false, requiredPlan: 'QUARTERLY' },
+    { titleKey: 'liveSessionRecording', category: 'MEDITATION', durationSeconds: 5400, isPreview: false, requiredPlan: 'QUARTERLY' },
   ];
 
   for (let i = 0; i < audioContent.length; i++) {
@@ -285,11 +285,11 @@ async function main() {
 
   // Create sample access keys
   const accessKeys = [
+    { keyCode: 'VM-DEMO1-WEEK', planId: 'WEEKLY', durationMonths: 0.25 }, // ~1 week
     { keyCode: 'VM-DEMO1-MONTH', planId: 'MONTHLY', durationMonths: 1 },
     { keyCode: 'VM-DEMO3-QUART', planId: 'QUARTERLY', durationMonths: 3 },
-    { keyCode: 'VM-DEMO12-YEAR', planId: 'ANNUAL', durationMonths: 12 },
-    { keyCode: 'VM-PROMO-GIFT1', planId: 'MONTHLY', durationMonths: 1 },
-    { keyCode: 'VM-PROMO-GIFT2', planId: 'QUARTERLY', durationMonths: 3 },
+    { keyCode: 'VM-PROMO-GIFT1', planId: 'WEEKLY', durationMonths: 0.25 },
+    { keyCode: 'VM-PROMO-GIFT2', planId: 'MONTHLY', durationMonths: 1 },
   ];
 
   for (const key of accessKeys) {

@@ -355,13 +355,13 @@ model Subscription {
 }
 
 enum SubscriptionPlan {
+  WEEKLY
   MONTHLY
   QUARTERLY
-  ANNUAL
 }
 
 model SubscriptionPlanConfig {
-  id              String           @id // MONTHLY, QUARTERLY, ANNUAL
+  id              String           @id // WEEKLY, MONTHLY, QUARTERLY
   price           Int              // Price in CLP
   nameEn          String           @map("name_en")
   nameEs          String           @map("name_es")
