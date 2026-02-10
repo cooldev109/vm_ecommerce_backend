@@ -79,6 +79,8 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Static file serving for audio files
 app.use('/audio', express.static(path.join(__dirname, '../uploads/audio')));
+// Also serve audio via /api/audio-files so nginx can proxy it
+app.use('/api/audio-files', express.static(path.join(__dirname, '../uploads/audio')));
 
 // Rate limiting (more lenient in development)
 const limiter = rateLimit({
